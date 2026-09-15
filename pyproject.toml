@@ -1,0 +1,22 @@
+[project]
+name = "upscaler"
+version = "0.0.1"
+description = "Canli video penceresini gercek zamanli 4K 60 FPS'e cikaran hat (yakalama, zaman cizgisi, GPU isleme)."
+requires-python = ">=3.13"
+license = "Apache-2.0"
+dependencies = [
+    "numpy",
+    "torch",            # sistemde kurulu: 2.11 + CUDA 12.6
+    "windows-capture",  # Windows.Graphics.Capture (WGC)
+    "pygame",           # onizleme penceresi ve test deseni
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = [
+    "live: gercek pencere ve GPU gerektiren canli testler (yavas)",
+]

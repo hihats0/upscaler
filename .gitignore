@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Kare, video ve kayit dosyalari repoya girmez (TOD asla kaydedilmez).
+*.png
+*.jpg
+*.mp4
+*.mkv
+*.raw
+*.y4m
+/data/
+/weights/
+/runs/

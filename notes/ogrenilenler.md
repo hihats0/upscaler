@@ -1,0 +1,99 @@
+# Öğrenilenler
+
+Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye işaretlenir. Ayrıntı ve kaynaklar `reports/` altında.
+
+## Yiğit'in gereksinimleri
+
+- 2026-09-15: **HER ŞEY CANLI.** Yiğit sert şekilde vurguladı. Çevrimdışı ürün fazı önerilmez, ölçüm de canlı hattan geçer.
+- 2026-09-15: İzleme harici 4K ekranda olacak. Hedef **4K 60 FPS**.
+- 2026-09-15: **1-2 saniye gecikme kabul.** Ses görüntüyle senkron gitmeli. Bu, gelecek kareleri görebilen (lookahead) modellerin önünü açıyor.
+- 2026-09-15: Önce **en yüksek kalite** görülsün, sonra optimize edilip **zayıf sistemlere** kadar indirilsin.
+- 2026-09-15: Proje **GitHub'da açık kaynak** olarak paylaşılacak. Model, veri ve ağırlık lisansları önemli hale geldi.
+
+## Kaynak (TOD)
+
+- ~~2026-09-15: TOD tarayıcıda 720p 25 FPS (forumlar).~~ **Yanlış çıktı.** Ölçüm aşağıda.
+- 2026-09-15 (**ölçüldü**, beIN Sports 1, Chrome): **1920x1080, gerçek 50p**, H.264 High L4.2, 4:2:0, BT.709 LIMITED. Ses AAC stereo 48 kHz. ABR: açılışta 640x360, sonra 1080p. Rapor: `reports/2026-09-15-faz0-kesif-tod-yakalama.md`.
+- 2026-09-15 (ölçüldü): Bitrate ~4,8 Mbps (Wi-Fi toplamı, üst sınır). Piksel başına ~0,046 bit, sıkı sıkıştırma. Modelin sıkıştırma hasarını da temizlemesi gerekiyor.
+- 2026-09-15 (ölçüldü): Widevine `use_hw_secure_codecs: false` (L3), `DecryptingVideoDecoder` (CPU'da çözme). **Chrome penceresi yakalanabiliyor, siyah değil** (BitBlt ve PrintWindow). WGC doğrudan denenmedi (tahmin: çalışır).
+- 2026-09-15 (ölçüldü): Chrome üstü kapalıyken yakalama yanıltıcı olur. TOD penceresi görünür olmalı.
+- 2026-09-15 (ölçüldü, `tools/probe_capture.py`): **WGC TOD'u yakalıyor**: 1920x1020, 49,8 benzersiz kare/sn. **Chrome'un üstü kapalıyken WGC 5 sn'de sadece 1 kare aldı**: Chrome çizmeyi bırakıyor. Canlı hatta TOD penceresi görünür olmalı. WGC `timespan` (100 ns) ile `perf_counter` aynı saat, fark ~3 ms.
+- 2026-09-15 (ölçüldü, test deseni barkodu): **WGC `MinUpdateInterval` varsayılanı yakalamayı 144 Hz'de 48 Hz'e kısıyor** (50 FPS kaynakta her 25 karede 1 kayıp, saat yanlışlıkla 48'e kilitleniyor). **1 ms verince: 50,03 FPS, 0 kayıp, saat sıra hatası 0**, ideal aralık hatası ≤ 0,27 ms. TOD'da da 50,09 FPS.
+- 2026-09-15 (ölçüldü): GPU'da 1080p→4K bicubic FP16 ~335 kare/sn (2,98 ms). 1080p BGRA pinned yükleme 0,65 ms.
+- 2026-09-15 (ölçüldü, `tools/probe_audio.py`): **Chrome sesi ProcTap (WASAPI process loopback, süreç ağacı dahil) ile yakalanıyor**: 48 kHz stereo float32, 480 örnek/10 ms parça, geliş p90 11,3 ms. Chrome sesi ayrı bir ses servisi sürecinden çalıyor (ağaç dahil etmek şart).
+- 2026-09-15 (ölçüldü): **Karıştırıcıda Chrome sessize alınınca yakalama da sessiz (-180 dBFS).** Chrome sesi 0,1 → yakalama ~-15 dB, 0,01 → ~-25 dB. Yakalama oturum sesinden SONRA. "Orijinali kıs, gecikmeli sesi biz çal" temiz değil (yankı). Temiz yol: Chrome'u kullanılmayan bir ses çıkışına yönlendirmek (Windows ayarı, Yiğit yapar) ya da sanal ses kablosu.
+- 2026-09-15 (ölçüldü): **RIFE 4.25 PyTorch FP16 1080p: ~21 kare/sn** (47 ms). scale=0,5 ve lite de 20-24. Darboğaz hesap değil çekirdek çağrı yükü (tahmin). Hedef: saniyede 50 ara kare. CUDA graphs / TensorRT şart.
+- 2026-09-15 (ölçüldü): **rife-flow** (RIFE akış+maske 540p, gerçek kareleri 1080p'de warp): ara kare 18 ms, tam RIFE 49 ms. 50→60 bütçe 934 ms/sn, henüz sığmıyor. CUDA graph %5.
+- 2026-09-15 (ölçüldü, tekrar oynatma): 50 FPS kaynak 144 Hz'de 3-3-...-2 vsync düzeniyle geliyor; biriken gecikme sonrası bir kare 6,9 ms aralıkla "yetişiyor". Bu kare yuva ortasına düşüyor ve saat onu tekrar sanıyor. Canlı test kararsızlığının kök nedeni.
+- 2026-09-15 (ölçüldü): **rife-flow akış ağı TensorRT FP16 (960x576): 11,2 ms → 4,6 ms (x2,44).** ONNX 15,8 MB, motor 125 MB, kurulum 34 sn (`tools/build_trt_flow.py`, strongly typed, `onnx` paketi gerekli). Rastgele girdide akış farkı ort. 0,17 px, maske logit farkı 1,85; **gerçekçi girdide (desen, kayan kare, doku) akış farkı ≤0,003 px, sigmoid maske ≤0,004, 1080p çıktı farkı ort. ≤0,004/255: doğrulandı.**
+- 2026-09-15: TensorRT 11.3 venv'e kuruldu (+3,3 GB). TRT 11'de `platform_has_fast_fp16` yok.
+- 2026-09-15 (ölçüldü): Canlı hat v0 (bicubic + doğrusal harman) TOD'da: 50 FPS giriş, 60,0 FPS çıkış, 0 geç tik, işlem p50 4,9 ms, VRAM 1,2 GB. Pencere yakalamada video dışı güncellemeler (kontroller, imleç) fazladan "kare" üretiyor.
+- Süper Lig'de 4K yok (forumlar). Edge + PlayReady donanım DRM'i yakalamayı siyah yapar.
+
+## Donanım (komutla okundu, 2026-09-15)
+
+- RTX 4070 Laptop GPU, 8188 MiB, güç sınırı en fazla 140 W. En güçlü 4070 Mobile sürümü.
+- Sürücü 610.88.
+- Dahili ekran 1920x1080 144 Hz, Intel iGPU üzerinden bağlı (Optimus). 4K çıktı bu ekranda görünmez.
+- NVIDIA tarafında görünen 1920x1080 60 Hz ekran gerçek monitör değil (`display_active: Disabled`), büyük ihtimalle Parsec sanal ekranı (2026-09-15).
+- 2026-09-15: Harici ekran bağlı değil. Chrome Intel iGPU'da çalışıyor (NVIDIA'da işlem yok). Windows ölçekleme %125.
+
+- 2026-09-15: Laptop ASUS TUF Gaming F15 FX507ZI4. i7-12700H, 16 GB RAM, C: 111 GB boş. HDMI 2.1 FRL, Thunderbolt 4 (DP), MUX anahtarı ve Advanced Optimus var. Python 3.13.13, CUDA araç seti 12.1.
+- Çıkarım: Harici 4K60 sorun değil. **Disk ve RAM asıl kısıt.** 4K PNG kareleri dakikada ~40-50 GB tutar (tahmin), diske dökülmez.
+
+## Lisanslar (2026-09-15)
+
+- Apache-2.0: SeedVR2, FlashVSR, EMA-VFI. MIT: EfRLFN, vs-rife.
+- Ticari olmayan / sadece araştırma: RVRT (CC-BY-NC), BiM-VFI (araştırma ve eğitim), GIMM-VFI (sarmalayıcı ticari olmayan, orijinal doğrulanmadı).
+- Pexels, kullanım koşullarında ML için veri toplamayı yasaklıyor.
+- Inter4K, X4K1000FPS, StreamSR, BasicVSR++ lisansları bulunamadı.
+
+## Hukuk ve veri (2026-09-15, avukat görüşü değil)
+
+- YouTube kullanım koşulları: YouTube'un kendi indirme düğmesi yoksa ya da hak sahibinin izni yoksa içerik indirilemez. İstisnalar: Creative Commons lisanslı videolar, kamu malı içerik, kendi yüklediğin videolar.
+- YouTube aramasında "Creative Commons" filtresi var. CC BY lisansı, atıf yapmak şartıyla yeniden kullanıma izin veriyor.
+- Türkiye'de ABD'deki gibi açık uçlu bir "adil kullanım" (fair use) kuralı yok. FSEK istisnaları dar ve sınırlı sayıda. Yapay zeka eğitimi için açık bir istisna yok. Yargıtay izinsiz çoğaltmayı hak ihlali sayıyor. Eğitim için lisans ve bedel öngören bir kanun teklifi var.
+- Sonuç: TOD'u kaydetmek ve CC olmayan YouTube maç videolarını indirmek olmaz. CC lisanslı videolar kullanılabilir.
+- Veri neden gerekli: (1) Ölçüm için "cevap anahtarı" (aynı sahnenin temiz 4K60 hali), (2) aynı klibin tekrar tekrar kullanılabilmesi, (3) tavan modelleri canlı çalışamayacak kadar yavaş ve TOD kaydedilemediği için dosya lazım, (4) kendi modelimizin eğitimi.
+
+## Bulut ve eğitim maliyeti (2026-09-15)
+
+- Vast.ai tipik saatlik: RTX 4090 $0.39, A100 80GB $0.94-1.32, H100 $2.13-2.21. Kesintili kiralama %30-50 ucuz. Depolama aylık GB başına $0.10-0.15, makine dursa da işler.
+- SwiftVR: H100'de 4K 14 FPS, RTX 5090'da 1080p 26 FPS. 1440p'de 38 GB bellek. Kod ve ağırlık yayında, kod lisansı doğrulanmadı. En ucuz 4K öğretmen adayı.
+- FlashVSR: A100'de 768x1408 için ~17 FPS.
+- Tahmin: İnce ayar 4090'da 5-12 saat ($2-5). Sıfırdan küçük SR 50-80 saat ($20-30). Kendi video modelimiz 150-400 saat ($60-160). Deneme-yanılma için 3-5 ile çarp.
+- Temiz 4K hedef görüntü varsa öğretmen gereksiz. Öğretmen, 1080p klipleri 4K sahte hedefe çevirmek için lazım.
+- **Yiğit'in bütçesi çok kısıtlı (2026-09-15).** Plan 0 TL varsayımıyla kuruldu.
+
+## Bedava GPU (2026-09-15)
+
+- Kaggle: Haftada ~30 saat (talebe göre değişir). P100 16 GB ya da 2x T4 (toplam 32 GB). Oturum en fazla 9 saat. "Save & Run All" ile tarayıcı kapalıyken arka planda çalışır.
+- Google Colab bedava: Haftada ~15-30 saat T4 16 GB. Oturum en fazla 12 saat ama garanti yok. 90 dakika etkileşim olmazsa bağlantıyı keser.
+- Tahmin: T4 ve P100, 140 W 4070 Laptop'tan yavaş. Değerleri: daha fazla VRAM (16 GB) ve laptop maç açarken eğitimin sürebilmesi.
+
+## Tavan modelleri
+
+- SeedVR2-3B bile en az ~18 GB VRAM istiyor, bizim laptopa sığmaz, bulut gerekir.
+- FlashVSR en az 8 GB VRAM ile çalışır, 4K için parça parça işleme şart, 32 GB RAM öneriliyor.
+
+## Modeller ve hız
+
+- Hafif SR modellerinde maliyetin çoğu girdi çözünürlüğünde harcanır. 720p kaynak, 1080p kaynağa göre çok daha ucuz.
+- EfRLFN: 720p x2'de RTX 2080'de 271 FPS, SPAN 60 FPS, NVIDIA VSR 52 FPS. Kullanıcı testinde EfRLFN, NVIDIA VSR'a karşı %77 tercih edildi. MIT lisanslı, x2 ve x4 ağırlıkları var.
+- RIFE v4.25 TRT FP16, 1080p'de 4060 Ti'de 84 FPS.
+- Tahmin: 4070 Laptop 140 W, 2080 Ti ile 4060 Ti arasında bir yerde.
+- Gerçek sıkıştırma hasarıyla eğitim, bicubic küçültmeyle eğitimden belirgin şekilde daha iyi (StreamSR çalışması).
+- Futbol verisiyle eğitilen SR, genel veriyle eğitilene göre futbolda biraz daha iyi (arXiv 2402.00163).
+- Difüzyon tabanlı futbol büyütücüler var (arXiv 2503.11181), ama gerçek zamanlı değiller.
+- SR ve ara kareyi ayrı ayrı zincirlemek israf. Hareket haritası ve maskeyi düşük çözünürlükte bir kez hesaplayıp paylaşmak daha verimli (arXiv 2104.05778).
+- FP8, Ada kartlarda (4070 dahil) TensorRT ile destekleniyor. SR modellerindeki kazancı ölçülmedi.
+
+## Veri
+
+- SoccerNet: 550 maç, 720p 25 FPS, NDA gerekiyor. 4K hedef görüntü olarak kullanılamaz.
+- StreamSR: 5200 YouTube videosu, EfRLFN deposunda. Lisansı kontrol edilecek.
+- TOD kaydını veri seti olarak kullanamayız (telif ve kullanım koşulları).
+
+## Çıkarımlar
+
+- Hız çözülebilir bir sorun. Asıl zorluk kalite: 720p, 25 FPS ve düşük bitrate kaynaktan iyi görüntü çıkarmak.
