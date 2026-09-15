@@ -111,3 +111,16 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Önizleme penceresi (pygame, 4K -> 540p + CPU kopyası) işlem süresine ~3-4 ms ekliyor.
 - Saat kilidi: 144 Hz ekranda 1 sn ısınma bazen 50 FPS kaynağı 48 Hz'e kilitliyor (3-3-2 vsync düzeni, 48 Hz skoru 0,28, 50 Hz 0,08). 3 sn'lik pencere bütün kayıtlarda 50 veriyor. Isınmayı uzatmak testleri bozdu; çözüm kilitten sonra her ~2 sn'de son 6 sn'lik geçmişle periyodu doğrulamak, arka arkaya 2 uyuşmazlıkta yeniden kilit. 3 sn'lik pencere canlıda 57 denemenin 6'sında yine 48 dedi.
 - Kare damgaları farklı ofset tahminleriyle yazılıyor: çıkış ızgarasına hizalamada alpha zaman farkından değil sıra numarasından hesaplanmalı.
+
+## Hat 1.4 maç günü sürümü (2026-09-15 akşam)
+
+- 1920x1080 kaynaşık motorlar derlendi: gerçek kare 2,99 ms, ara kare (karma) 11,13 ms (ayrı parçalar 5,20 / 13,12).
+- TOD ABR 720p'ye düşse de **pencere boyutu değişmez** (Chrome videoyu pencereye büyütür). Hattın gördüğü boyut değişimi tam ekran <-> pencere geçişi. Motoru olmayan boyut en yakın motor tuvaline sığdırılıyor (`process.plan_input`, `fit_bgra`).
+- GL bağlamı bu laptopta ortam değişkeni olmadan da NVIDIA'da açılıyor (`NVIDIA GeForce RTX 4070 Laptop GPU/PCIe/SSE2`, GL 4.6).
+- CUDA-GL interop: `cudaGraphicsSubResourceGetMappedArray(cudaArray_t*, resource, index, mip)` ve `cudaGraphicsResourceGetMappedPointer(void**, size_t*, resource)`. Argüman sırası çoğu örnekten farklı; ters sırada kayıt "başarılı" görünür ama eşleme 400 verir.
+- **Chrome örtülme (ölçüldü, WGC benzersiz kare/sn):** açık 54; ekranı birebir kaplayan ve çizen üst pencere altında **35** (araç penceresi de normal pencere de); aynı pencere çizmeyince 50; **pencere 1 px kısa olunca 50,0** (araç ya da normal). Sebep tahmin: DWM tam ekran yolu. Sunucu penceresi 1 px kısa açılıyor.
+- Process loopback (ProcTap) Microsoft belgesine göre belirli bir ses uç noktasına bağlı değil: Chrome başka çıkışa yönlendirilse de yakalanır. Bu laptopta ikinci çıkış aygıtı olmadığı için deneyle doğrulanmadı.
+- Watch TOD 180 sn (1920x1020 pencere, laptop 144 Hz, timer modu): çıkış 60,0, geç tik 0, işlem p95 12,82 ms, **sunum dahil uçtan uca p95 13,89 ms**, sunum (yükleme 0,9 + çizim + swap) p95 1,72 ms, geç sunum %0,075, nvidia-smi VRAM 2533 MB sabit, torch reserved 1514 MB sabit, GPU 66 -> 81 °C, 72-81 W. İlk kare süreç başlangıcından 7,1 sn.
+- İlk denemede kaynak/ses yönetimi (ProcTap başlatma, öne getirme) çıkış döngüsünde 7 sn bloke etti (444 geç tik): yönetim ayrı iş parçacığına alındı.
+- ProcTap parça gelmeden `alive()` yanlış "ölü" diyordu: başlangıç payı eklendi.
+- A/V 3 dk (ffplay flaş+bip klibi): ffplay'in kendi A/V farkı medyan 46 ms, çıkış 49 ms, hattın eklediği 2,8 ms. Çıkış farkı 3 dk'da 37 -> 59 ms kaydı: incelenmedi (tahmin: ölçüm eşleştirmesi ya da sunum gecikmesi EMA'sı).

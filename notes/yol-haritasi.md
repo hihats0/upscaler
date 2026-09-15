@@ -2,18 +2,18 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-15 akşam, Hat 1.4 maç günü sürümü sürüyor)
+## Şu an neredeyiz (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 
-Görev: tek komutla TOD canlı maçını 4K60, senkron sesle, 90+ dk kesintisiz izlemek. Paketler (sırayla):
+Görev: tek komutla TOD canlı maçını 4K60, senkron sesle, 90+ dk kesintisiz izlemek. Paketler:
 
-1. ✅ Tam ekran ve boyut değişimi: 1920x1080 kaynaşık motorlar derlendi. `process.plan_input` + `fit_bgra`: motoru olmayan boyut en yakın tuvale sığdırılır, tuval yoksa ayrı parçalar. `GpuFrameRing` yeniden ayırmada eski seçimleri canlı tutar (generation). Test: `tests/test_reconfigure.py`.
-2. ⏳ GPU'da kalan sunucu: `upscaler/present.py` (glfw + GL + CUDA-GL interop, doku doğrulandı, sunum ~1,4 ms). Pencere 1 px kısa (Chrome örtülme). Bench: `python -m upscaler.present --seconds 10 --verify`.
-3. ⏳ Senkron ses: `upscaler/audio.py` (ProcTap -> halka -> DAC zamanıyla kilitli çalma, kayma düzeltmesi). A/V klibi: `tools/make_av_clip.py`.
-4. ⏳ `python -m upscaler watch` (`upscaler/watch.py`), masaüstü .bat, README.
-5. ⏳ Dayanıklılık (watch.py içinde: pencere/yakalama/ses/ekran toparlama, runs/ kayıtları, nvidia-smi).
-6. ⏳ 60-100 dk canlı TOD sınavı.
+1. ✅ **Boyut değişimi:** 1920x1080 kaynaşık motorlar (gerçek kare 2,99 ms, ara kare 11,13 ms). `process.plan_input` + `fit_bgra`, `GpuFrameRing` generation. Test `tests/test_reconfigure.py`. Commit efb3184.
+2. ✅ (4K ekran hariç) **GPU sunucu** `upscaler/present.py`: glfw + GL + CUDA-GL interop (doku birebir doğrulandı), araç penceresi, 1 px kısa (Chrome örtülme), Esc/S/I, ekran değişiminde yeniden açma. TOD watch 180 sn: uçtan uca p95 13,89 ms, sunum p95 1,72 ms, geç sunum %0,075, geç tik 0. Laptop 144 Hz: "timer" modu. ⏳ Kilit modu donanımda denenmedi: `--out-fps 48` ile (144/3) dene.
+3. ⏳ **Ses** `upscaler/audio.py`: çalışıyor (TOD 180 sn: hata p99 3,4 ms, sert atlama 0). A/V 3 dk (`tools/av_sync_test.py --seconds 180 --run-name av_3dk`): hattın eklediği fark medyan 2,8 ms, AMA çıkış A/V 3 dk'da 36,9 -> 58,6 ms kaydı (eğim 680 ms/saat). **Sıradaki ilk iş:** `runs/av_3dk` kaydıyla bunun gerçek kayma mı ölçüm hatası mı olduğunu ayır (AvProbe eşleştirme penceresi 2 sn flaş periyoduna göre dar olmalı, goruntu/ses gecikmesi -491 ms yanlış eşleşme). Olası gerçek sebep: `lag_ema` (sunum gecikmesi) ya da CaptureClock alt zarfı. Sonra 60 dk A/V koşusu (drift <= 20 ms).
+4. ✅ (ölçüm kaldı) `python -m upscaler watch`, `watch.bat`, masaüstü `Maç izle (upscaler).bat`, README. İlk kare 7,1 sn (süreç başlangıcından). Kapanış temizliği 0,09 sn; süreç çıkışı dahil ölçülmedi (olaylarda `unix` alanı var).
+5. ⏳ **Dayanıklılık:** kod watch.py'de (yönetici iş parçacığı, pencere/yakalama/ses/sunucu toparlama, donma boşluğunda tutma `schedule.GAP_PERIODS`, runs/ kayıtları, nvidia-smi). Sınav aracı yazıldı, **koşulmadı:** `tools/robustness_test.py --run-name robust1`.
+6. ⏳ 60-100 dk canlı TOD sınavı (watch --dump-timing --info). GPU 180 sn'de 81 °C'ye çıktı, kısıtlama kolonu izlenmeli. RSS ~3 MB/dk arttı (istatistik listeleri array'e çevrildi, uzun koşuda tekrar bak).
 
-Yarım kalırsa: `git log`, bu liste ve `runs/watch_*/summary.json` ile devam et.
+Sonra: `reports/2026-09-15-hat14-mac-gunu-surumu.md`, vault notu, commit. 4K kontrol listesi raporda.
 
 ## Önceki durum (2026-09-15 17:00, Hat 1.2 çıkış kriteri karşılandı)
 

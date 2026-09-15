@@ -23,7 +23,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from . import winutil
+from . import schedule, winutil
 from .capture import WgcSource
 from .process import PROCESSORS, make_processor
 from .ring import GpuFrameRing
@@ -48,17 +48,6 @@ class LiveConfig:
     snap: bool = True  # cikisi kaynak+cikis ortak izgarasina hizala
     sr: str = "rt4ksr-x2"  # *-sr islemcilerinin SR modeli
     split: bool = False  # kiyas: sol yari SR, sag yari bicubic
-
-
-def _snap_grid(period: float | None, out_fps: float) -> tuple[float, int] | None:
-    """Kaynak ve cikis hizi tam sayiysa ortak izgara: (adim sn, kaynak periyodundaki faz sayisi)."""
-    if not period:
-        return None
-    src = 1.0 / period
-    if abs(src - round(src)) > 1e-6 or abs(out_fps - round(out_fps)) > 1e-6:
-        return None  # 29.97 gibi hizlarda hizalama yok
-    lcm = math.lcm(round(src), round(out_fps))
-    return 1.0 / lcm, round(lcm / src)
 
 
 class Preview:
@@ -161,35 +150,13 @@ def run(cfg: LiveConfig) -> dict:
                 k += missed
                 continue
 
-            s = T - cfg.delay
-            if ring.clock.period is None:
-                # Saat kilitlenmeden cikis yok: isinma damgalari titrek, izgara belirsiz.
-                waiting += 1
-                k += 1
-                continue
-            grid = _snap_grid(ring.clock.period, cfg.out_fps) if cfg.snap else None
-            if grid:
-                # Kaynak zamanini kaynak+cikis ortak izgarasina oturt (50/60 -> 1/300 sn).
-                # Boylece bazi tikler tam gercek kareye duser (ara kare yok) ve ara oranlar sabit.
-                step, phases = grid
-                origin = ring.clock._offset
-                s = origin + round((s - origin) / step) * step
-            p = ring.pick(s)
+            # Saat kilitlenmeden cikis yok; izgara hizalama ve alpha kurallari schedule.select icinde.
+            p, s = schedule.select(ring, T - cfg.delay, cfg.out_fps, cfg.snap)
             if p is None:
                 waiting += 1
                 k += 1
                 continue
-            if grid:
-                # Alpha sira numarasindan: kare damgalari (t) yazildiklari andaki ofset tahminiyle
-                # kalir, ofset kaydikca zaman farkindan gelen alpha 1/phases izgarasina oturmaz
-                # (TOD 70 sn: (s - a_t)*300 kusurati p99 0,38; gercek kare tik 0,118, beklenen 0,167).
-                a = p.alpha * phases
-                ai = round((s - origin) / ring.clock.period * phases) / phases - p.a.stamp.index
-                if p.b.stamp.index == p.a.stamp.index + 1 and -0.5 / phases <= ai <= 1 + 0.5 / phases:
-                    p.alpha = min(max(ai, 0.0), 1.0)
-                elif abs(a - round(a)) < 0.15:  # sira atlamasi ya da tutma: zaman oranina don
-                    p.alpha = round(a) / phases
-            real_ticks += p.alpha <= 1e-3 or p.alpha >= 1 - 1e-3
+            real_ticks += schedule.is_real(p.alpha)
             try:
                 t_a = time.perf_counter()
                 fa, fb = p.frames()

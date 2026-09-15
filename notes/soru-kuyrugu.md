@@ -14,6 +14,19 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 7. **GitHub:** Repo baştan herkese açık mı olsun, yoksa ilk çalışan sürümde mi açılsın?
 8. **İsim:** Projenin GitHub adı ne olsun?
 
+## Yiğit'in yapacağı Windows ayarları (talimat, agent değiştirmez)
+
+**Çift ses (Chrome'un kendi sesi + bizim 1,5 sn gecikmeli sesimiz):**
+1. Karıştırıcıda Chrome'u sessize ALMA: yakalama da susuyor (ölçüldü).
+2. Ayarlar > Sistem > Ses > Ses karıştırıcı > uygulamalar listesinde Chrome > Çıkış aygıtı: **kullanılmayan bir çıkış** seç.
+   - 4K ekran HDMI ile bağlıyken: Chrome'u ekranın HDMI ses çıkışına (hoparlörü yoksa sessiz kalır) ya da tersine yönlendir; upscaler varsayılan çıkıştan çalar (`--audio-device "Hoparlör"` ile ad parçasıyla seçilebilir).
+   - Tek çıkış varsa (sadece laptop hoparlörü): ücretsiz sanal kablo (VB-CABLE) kurup Chrome'u "CABLE Input"a yönlendir. Sürücü kurulumu senin kararın.
+3. Kontrol: `watch --info` açıkken bilgi katmanında "ses: çalıyor" ve hata ms değeri akıyorsa yakalama yönlendirmeden sonra da çalışıyor. (Microsoft belgesi: process loopback belirli bir çıkışa bağlı değil; bu laptopta ikinci çıkış olmadığı için denenemedi.)
+
+**Ekran:** 4K ekranda NVIDIA/Windows ayarında 3840x2160 **60 Hz** seçili olmalı (144 Hz laptop panelinde 60'a vsync kilidi yok, hat kendi saatiyle akar).
+
+**Chrome:** Yayın tam ekran (1920x1080) olsun. Başka pencere Chrome'u tamamen kapatmasın (watch bulunca Chrome'u öne alıyor).
+
 ## Keşif testleri (Faz 0)
 
 - ✅ 2026-09-15: Yakalama testi (agent yaptı, Yiğit "sen yap" dedi): görüntü geliyor, siyah değil.
