@@ -95,9 +95,11 @@ Bu oturumdaki TOD koşuları (hepsi `--dump-timing` ile):
 - Denenen ve elenenler:
   - Isınmayı 2 sn'ye uzatmak: tuzağı çözdü ama 6 birim testi kaldı. Kilitten önce titrek damgayla giren kare sayısı artıyor, ring tekrar oynatmasında bir karelik (20 ms) hatalar çıktı.
   - "Sadece tam katsa uzun periyodu seç" kuralı: 60 Hz ekranda 25 FPS'i 59,94'e kilitledi.
-- **Düzeltme: kilit sonrası periyot doğrulaması** (`SourceClock`): ilk kilit 1 sn'de kalır. Kabul edilen ham zamanların son 3 sn'si birikince periyot bir kez yeniden tahmin edilir. %1'den fazla farklıysa saat yeniden kilitlenir (`relocks`), geçmiş yeniden numaralanır, `GpuFrameRing` tampondaki damgaları yeniden kurar.
-- Çevrimdışı tekrar: B **3,01 sn'de 20,833 -> 20,0 ms**. Sıra farkı (son %80) 0: 91 -> 20, 2: 46 -> 21. Kalanlar önizleme yükündeki gerçek yakalama düzensizliği olabilir (tahmin). Diğer 3 TOD kaydında yeniden kilit yok.
-- Regresyon testi: `tests/test_clock_lock.py`. B'nin ham zamanları `tests/data/tod_window_144hz_48hz_trap.csv` (sadece sayı). Temiz kayıtlarda 0 yeniden kilit, tuzakta 1 yeniden kilit, 6 sn içinde 50 Hz. 49 birim testi geçiyor.
+- **Düzeltme: kilit sonrası kayan periyot doğrulaması** (`SourceClock`): ilk kilit 1 sn'de kalır. Her 100 kabul edilen karede son 6 sn'lik ham zamanlarla periyot yeniden tahmin edilir. **Arka arkaya iki** uyuşmazlıkta saat yeniden kilitlenir (`relocks`), geçmiş yeniden numaralanır, `GpuFrameRing` tampondaki damgaları yeniden kurar.
+- İlk deneme (3 sn'lik tek seferlik doğrulama) B'yi çevrimdışı düzeltti ama canlı split koşusunda (önizleme açık) yine 48'de kaldı. O kayıtta 3 sn'lik kayan pencereler 57 denemenin 6'sında 48 dedi. 6 ve 10 sn'lik pencereler bütün kayıtlarda her seferinde 50 dedi.
+- Çevrimdışı tekrar: B 8,13 sn'de, canlı split kaydı 12,52 sn'de 20,0 ms'e düzeldi. 3 temiz TOD kaydında yeniden kilit yok.
+- **Canlı doğrulama** (split + önizleme, 60 sn): saat 20,0 ms ile bitti, `yeniden_damgalama` 2 (ilk kilit + yeniden kilit), gerçek kare tik 0,168.
+- Regresyon testi: `tests/test_clock_lock.py`. İki tuzak kaydı `tests/data/tod_window_144hz_48hz_trap{,2}.csv` (sadece sayı): temizlerde 0, tuzaklarda 1 yeniden kilit.
 
 44,6 FPS için olası sebepler (**tahmin**, doğrulanmadı):
 1. `capture.py` art arda aynı görünen kareleri atar (8 pikselde bir örnek). Durağan içerik (sabit reklam görüntüsü, grafik, siyah geçiş) giriş FPS'ini düşürür.
@@ -123,13 +125,27 @@ Amaç: p95 payını açmak. `tools/build_trt_pipeline.py`, 1920x1020 -> 4K, sent
 
 ## 7. Bölünmüş ekran kıyas modu
 
-`--split`: sol yarı SR, sağ yarı aynı ara karenin bicubic büyütmesi, ortada 4 px beyaz çizgi. Kaynaşık motor bu modu desteklemez, ayrı parçalara düşer. Birim testi: `test_split_left_sr_right_bicubic_with_divider`.
+`--split`: sol yarı SR, sağ yarı aynı karenin bicubic büyütmesi, ortada 4 px beyaz çizgi. `process.overlay_bicubic_right` ortak yardımcı: SR çıktısının üstüne sağ yarıyı yazar, sadece sağ yarının kaynak sütunlarını büyütür (tam 2x ölçekte tam görüntüyle birebir aynı). Birim testleri: `test_split_left_sr_right_bicubic_with_divider`, `test_sr_letterbox_keeps_aspect_and_black_bars`.
+
+TOD canlı (1920x1020):
+
+| Sürüm | Önizleme | Çıkış FPS | Geç tik | İşlem p50 / p95 | Saat |
+|---|---|---|---|---|---|
+| v1: ayrı parçalar, tam 4K bicubic, 4K float alan küçültmeli önizleme | açık, 60 sn | 51,2 | 512 | 20,6 / 21,7 ms | 20,833 (tuzak) |
+| v2: sağ yarı bicubic, seyreltmeli önizleme | açık, 60 sn | 59,27 | 42 | 18,0 / 19,1 ms | 20,0 (canlı yeniden kilit) |
+| **v3: karma kaynaşık yol** (`--proc fused-sr --split`) | **yok**, 30 sn | **60,0** | **0** | 13,97 / **15,46 ms** | 20,0 |
+| v3 | açık, 30 sn | 59,86 | 4 (%0,24) | 15,94 / 17,25 ms | 20,0 (canlı yeniden kilit) |
+
+Kıyas modu önizlemesiz hedefin içinde. Önizleme (pygame + CPU kopyası) hâlâ ~2 ms ekliyor. Gerçek 4K çıkış yolu GPU'da kalınca bu maliyet değişecek.
 
 ## Açık sorular
 
 - RT4KSR TOD'un H.264 hasarında ne kadar iyi? (Hat 2: TOD simülatörü + CC klipler, ince ayar.)
-- Harici 4K ekranda sunum (present) maliyeti ölçülmedi. Şu an önizleme yok, `torch.cuda.synchronize()` ile ölçülüyor.
-- Ses gecikmeli çalma hâlâ yok.
+- Harici 4K ekranda sunum (present) maliyeti ölçülmedi. Ölçümler önizlemesiz, `torch.cuda.synchronize()` ile. pygame önizlemesi ~3-4 ms ekliyor; gerçek çıkış yolu (mpv türü, GPU'da kalan sunum) gerekli.
+- Ses gecikmeli çalma hâlâ yok (Chrome çıkış yönlendirmesi sorusu `notes/soru-kuyrugu.md`).
+- Kaynaşık motorlar sadece 1920x1020 (ekranı kaplayan pencere) için derlendi. Tam ekran TOD 1920x1080 için `tools/build_trt_pipeline.py --h 1080 --w 1920` gerekli (motor yoksa ayrı parçalara düşer, p95 ~15,8 ms).
+- 44,6 FPS anomalisi tekrarlanmadı. Görülürse `--dump-timing` kaydıyla ayırt edilecek.
+- Önizleme açıkken tuzak kaydında sıra farkı 0/2 değerleri kalıyor (20/21). Gerçek yakalama düzensizliği mi, saat kuralları mı, ayrılmadı.
 
 ## Kaynaklar
 

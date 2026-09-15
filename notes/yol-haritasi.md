@@ -6,8 +6,8 @@
 
 - ✅ **Gerçek SR modeli hatta:** RT4KSR x2 (Apache-2.0), TensorRT 1080p 3,1 ms, doğal görüntüde bicubic'ten +2,9 dB. EfRLFN elendi (1080p'de 105 ms).
 - ✅ **TOD canlı RIFE + RT4KSR 4K60** (`--proc fused-sr`, 70 sn): çıkış 59,97 FPS, geç tik %0,05, işlem p95 13,85 ms, VRAM 1,45 GB. Rapor: `reports/2026-09-15-hat12-sr-modeli.md`.
-- ✅ `--split` (sol SR, sağ bicubic), `--dump-timing` + `tools/analyze_timing.py`.
-- ✅ Düzeltilen hatalar: alpha artık sıra numarasından (gerçek kare tik 0,118 -> 0,167); saat 48 Hz tuzağı (kilitten sonra 3 sn'lik geçmişle periyot doğrulaması).
+- ✅ `--split` (sol SR, sağ bicubic; `fused-sr --split` önizlemesiz 60,0 FPS, p95 15,5 ms), `--dump-timing` + `tools/analyze_timing.py`.
+- ✅ Düzeltilen hatalar: alpha artık sıra numarasından (gerçek kare tik 0,118 -> 0,167); saat 48 Hz tuzağı (kilitten sonra 6 sn'lik kayan periyot doğrulaması, canlıda doğrulandı).
 - ⚠️ 44,6 FPS anomalisi 4 koşuda tekrarlanmadı, kayıt aracı hazır.
 - **Sıradaki:** gecikmeli ses çalma (Chrome çıkış yönlendirmesi sorusu bekliyor), 1920x1080 (tam ekran) motorları, harici 4K ekranda sunum maliyeti, Hat 1.3 (canlı ölçüm) ya da Hat 2.0 (CC veri, TOD simülatörü; RT4KSR'nin H.264 hasarındaki kalitesi).
 

@@ -147,6 +147,30 @@ class RifeFlowProcessor(BaselineProcessor):
         return self.upscale(self.mid_rgb(a_bgra, b_bgra, alpha).flip(1) * 255.0)
 
 
+def overlay_bicubic_right(out: torch.Tensor, mid: torch.Tensor, fit: tuple[int, int, int, int]) -> None:
+    """Kiyas modu: cikisin sag yarisina ayni karenin bicubic buyutmesini yazar, ortaya 4 px cizgi.
+
+    out: (1,3,out_h,out_w) uint8 BGR (yerinde degisir), mid: (1,3,H,W) RGB 0..1, fit: fit_size sonucu.
+    Sadece sag yarinin kaynak sutunlari buyutulur (tam 4K bicubic ~3 ms yiyordu). Tam 2x olcekte
+    kesilen dilimin sonucu tam goruntununkiyle birebir ayni: bicubic 4 komsu kullanir, 4 kaynak
+    sutun pay kesim kenarinin etkisini disarida birakir.
+    """
+    h, w, top, left = fit
+    half = out.shape[3] // 2
+    x0 = max(half - left, 0)
+    if x0 >= w:
+        return
+    src_w = mid.shape[3]
+    if w == 2 * src_w and h == 2 * mid.shape[2]:
+        c0 = max(x0 // 2 - 4, 0)
+        src, off, bw = mid[:, :, :, c0:], x0 - 2 * c0, 2 * (src_w - c0)
+    else:
+        src, off, bw = mid, x0, w
+    bic = F.interpolate(src.flip(1) * 255.0, size=(h, bw), mode="bicubic", align_corners=False)
+    out[:, :, top:top + h, left + x0:left + w].copy_(bic[:, :, :, off:].add_(0.5).clamp_(0, 255))
+    out[:, :, top:top + h, max(half - 2, 0):half + 2] = 255
+
+
 class SrUpscaler:
     """SR modeli: RGB 0..1 [1,3,H,W] -> RGB 0..1 [1,3,sH,sW].
 
@@ -244,12 +268,7 @@ class SrProcessor(BaselineProcessor):
         y = sr.flip(1)  # RGB -> BGR (kopya)
         out[:, :, top:top + h, left:left + w].copy_(y.mul_(255.0).add_(0.5).clamp_(0, 255))
         if self.split:
-            half = self.out_w // 2
-            x0 = max(half - left, 0)
-            if x0 < w:
-                bic = F.interpolate(mid.flip(1) * 255.0, size=(h, w), mode="bicubic", align_corners=False)
-                out[:, :, top:top + h, left + x0:left + w].copy_(bic[:, :, :, x0:].add_(0.5).clamp_(0, 255))
-                out[:, :, top:top + h, max(half - 2, 0):half + 2] = 255  # ayirici cizgi
+            overlay_bicubic_right(out, mid, fit)
         return out
 
 
@@ -264,13 +283,14 @@ class FusedSrProcessor(BaselineProcessor):
     EPS = 1e-3
 
     def __init__(self, sr_name: str = "rt4ksr-x2", out_h: int = 2160, out_w: int = 3840,
-                 dtype: torch.dtype = torch.float16) -> None:
+                 dtype: torch.dtype = torch.float16, split: bool = False) -> None:
         super().__init__(out_h, out_w, dtype)
         self.sr_name = sr_name
+        self.split = split
         self.flow = RifeFlowProcessor("4.25", 0.5, out_h, out_w, dtype, trt=True)
         self._engines: dict[tuple[int, int], tuple | None] = {}
         self._fallback: SrProcessor | None = None
-        self.name = f"rife-flow-trt+{sr_name}+fused-out"
+        self.name = f"rife-flow-trt+{sr_name}+fused-out" + ("+split" if split else "")
 
     def _get(self, h: int, w: int):
         key = (h, w)
@@ -291,14 +311,21 @@ class FusedSrProcessor(BaselineProcessor):
         eng = self._get(*a_bgra.shape[:2])
         if eng is None:
             if self._fallback is None:
-                self._fallback = SrProcessor(self.sr_name, "rife-flow", False, self.out_h, self.out_w, self.dtype)
+                self._fallback = SrProcessor(self.sr_name, "rife-flow", self.split, self.out_h, self.out_w, self.dtype)
             return self._fallback(a_bgra, b_bgra, alpha)
         still, rgbsr = eng
-        if alpha <= self.EPS:
-            return still(a=a_bgra)["y"]
-        if alpha >= 1.0 - self.EPS:
-            return still(a=b_bgra)["y"]
-        return rgbsr(x=self.flow.mid_rgb(a_bgra, b_bgra, alpha).to(torch.float16))["y"]
+        mid = None
+        if alpha <= self.EPS or alpha >= 1.0 - self.EPS:
+            src = a_bgra if alpha <= self.EPS else b_bgra
+            y = still(a=src)["y"]
+        else:
+            mid = self.flow.mid_rgb(a_bgra, b_bgra, alpha)
+            y = rgbsr(x=mid.to(torch.float16))["y"]
+        if self.split:
+            if mid is None:
+                mid = self.to_float(src, self.dtype).flip(1) / 255.0
+            overlay_bicubic_right(y, mid, fit_size(mid.shape[2], mid.shape[3], self.out_h, self.out_w))
+        return y
 
 
 PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt",
@@ -325,6 +352,6 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "r
         return SrProcessor(sr, "rife-flow", split, out_h, out_w, trt=False)
     if name == "rife-flow-trt-sr":
         return SrProcessor(sr, "rife-flow", split, out_h, out_w, trt=True)
-    if name == "fused-sr":  # kiyas modu kaynasik motorda yok: ayri parcalara duser
-        return SrProcessor(sr, "rife-flow", True, out_h, out_w, trt=True) if split else FusedSrProcessor(sr, out_h, out_w)
+    if name == "fused-sr":
+        return FusedSrProcessor(sr, out_h, out_w, split=split)
     raise ValueError(f"bilinmeyen islemci: {name}")

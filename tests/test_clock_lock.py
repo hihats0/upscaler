@@ -32,10 +32,15 @@ def test_clean_144hz_recordings_lock_once_to_50(name):
     assert clock.relocks == 0
 
 
-def test_48hz_trap_is_corrected_by_verification():
-    """TOD, onizleme acik: 1 sn isinma 48 Hz'e kilitliyor, dogrulama birkac saniyede 50'ye cekmeli."""
-    clock, first, relock_s = _replay("tod_window_144hz_48hz_trap.csv")
+@pytest.mark.parametrize("name, limit_s", [("tod_window_144hz_48hz_trap.csv", 10.0),
+                                           ("tod_window_144hz_48hz_trap2.csv", 15.0)])
+def test_48hz_trap_is_corrected_by_verification(name, limit_s):
+    """TOD, onizleme acik: 1 sn isinma 48 Hz'e kilitliyor, dogrulama 6 sn pencere + 2 onayla 50'ye cekmeli.
+
+    trap2: 3 sn'lik tek seferlik dogrulamanin da 48 dedigi canli kayit (57 pencerenin 6'si 48).
+    """
+    clock, first, relock_s = _replay(name)
     assert first == pytest.approx(1 / 48)
     assert clock.period == pytest.approx(0.02)
     assert clock.relocks == 1
-    assert relock_s is not None and relock_s < 6.0
+    assert relock_s is not None and relock_s < limit_s

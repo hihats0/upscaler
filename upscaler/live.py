@@ -75,8 +75,11 @@ class Preview:
         self.surf = pygame.Surface((w, h))
 
     def show(self, bgr: torch.Tensor) -> None:
-        small = F.interpolate(bgr.float(), size=(self.h, self.w), mode="area")
-        rgb_xy = small[0].flip(0).permute(2, 1, 0).clamp_(0, 255).to(torch.uint8).cpu().numpy()
+        # Seyreltme (onizleme kalitesi onemsiz): 4K float alan kucultme + kopya islem suresine
+        # ~3-4 ms ekliyordu (TOD, 2026-09-15).
+        sy, sx = max(bgr.shape[2] // self.h, 1), max(bgr.shape[3] // self.w, 1)
+        small = bgr[0, :, ::sy, ::sx][:, :self.h, :self.w]
+        rgb_xy = small.flip(0).permute(2, 1, 0).contiguous().cpu().numpy()
         self.pg.surfarray.blit_array(self.surf, rgb_xy)
         self.screen.blit(self.surf, (0, 0))
         self.pg.display.flip()

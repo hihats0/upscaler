@@ -120,11 +120,15 @@ class SourceClock:
         self.fixes = 0
         self._before_last_index = -(10 ** 9)  # sondan bir onceki kabul edilen karenin sirasi
         # Periyot dogrulamasi: 1 sn'lik isinma 144 Hz ekranda 50 FPS'i 48 Hz sanabiliyor.
-        # Kilitten sonra verify_span sn'lik ham gecmisle bir kez yeniden tahmin edilir.
-        self.verify_span = 3.0
+        # Kilitten sonra her verify_every karede son verify_span sn'lik ham gecmisle yeniden
+        # tahmin edilir; arka arkaya iki uyusmazlikta saat yeniden kilitlenir. 3 sn'lik pencere
+        # canli TOD kaydinda 57 denemenin 6'sinda yine 48 dedi, 6 ve 10 sn hic yanilmadi.
+        self.verify_span = 6.0
+        self.verify_every = 100
         self.relocks = 0
         self._recent: deque[float] = deque(maxlen=400)
-        self._verified = False
+        self._since_verify = 0
+        self._disagree = 0
 
     def push(self, raw: float) -> FrameStamp:
         last = self._last
@@ -137,7 +141,8 @@ class SourceClock:
             self._hist.clear()
             self._warm.clear()
             self._recent.clear()
-            self._verified = False
+            self._since_verify = 0
+            self._disagree = 0
             return self._accept(last.index + 1, raw, discontinuity=True)
 
         if self.period is None:
@@ -221,14 +226,20 @@ class SourceClock:
             # Gecmisi yeni periyotla yeniden numarala (isinmada dusen kareler).
             self._hist = deque(renumber(list(self._hist), p), maxlen=self.window)
             return
-        if not self._verified and self._recent[-1] - self._recent[0] >= self.verify_span:
-            self._verified = True
+        self._since_verify += 1
+        if self._since_verify >= self.verify_every and self._recent[-1] - self._recent[0] >= self.verify_span:
+            self._since_verify = 0
             p = estimate_period(list(self._recent), min_span=self.verify_span)
             if p is not None and abs(p - self.period) > 0.01 * self.period:
-                self.period = p
-                self.relocks += 1
-                self._hist = deque(renumber(list(self._hist), p), maxlen=self.window)
-                return
+                self._disagree += 1
+                if self._disagree >= 2:
+                    self._disagree = 0
+                    self.period = p
+                    self.relocks += 1
+                    self._hist = deque(renumber(list(self._hist), p), maxlen=self.window)
+                    return
+            else:
+                self._disagree = 0
         if len(self._hist) < self.fit_after or self._hist[-1][0] == self._hist[0][0]:
             return
         # Egim sadece izgaraya uyan karelerden (fazladan guncellemeler egimi bozmasin).
