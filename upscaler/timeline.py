@@ -74,6 +74,12 @@ def estimate_period(raws: list[float], min_span: float = 1.0) -> float | None:
     kareler kadranda ayni yere duser (R yuksek). Dusen kare fazi bozmaz.
     Alt katlar da (25 FPS kaynak icin P=20 ms) yuksek R verir, bu yuzden
     yuksek R'liler icinden EN UZUN periyot secilir.
+
+    Tuzak (2026-09-15): 1 sn'lik pencerede 144 Hz ekrandaki 50 FPS kaynak (3-3-...-2
+    vsync duzeni + 13,9/27,8 ms titreme) 48 Hz'e R=0,28, 50 Hz'e R=0,08 verebildi; saat
+    20,833 ms'e kilitlenip tekrar/bosluk uretti (TOD, onizleme acik). 3 sn'de ayni kayit
+    50 Hz veriyor. Ilk kilit hizli kalsin diye pencere 1 sn; SourceClock kilitten sonra
+    periyodu daha uzun gecmisle bir kez dogrular (tests/data/tod_window_144hz_48hz_trap.csv).
     """
     if len(raws) < 8 or raws[-1] - raws[0] < min_span:
         return None
@@ -113,6 +119,12 @@ class SourceClock:
         self.repeats = 0
         self.fixes = 0
         self._before_last_index = -(10 ** 9)  # sondan bir onceki kabul edilen karenin sirasi
+        # Periyot dogrulamasi: 1 sn'lik isinma 144 Hz ekranda 50 FPS'i 48 Hz sanabiliyor.
+        # Kilitten sonra verify_span sn'lik ham gecmisle bir kez yeniden tahmin edilir.
+        self.verify_span = 3.0
+        self.relocks = 0
+        self._recent: deque[float] = deque(maxlen=400)
+        self._verified = False
 
     def push(self, raw: float) -> FrameStamp:
         last = self._last
@@ -124,6 +136,8 @@ class SourceClock:
             # Duraklama: gecmisi at, sirayi surdur, zamani yeniden capala.
             self._hist.clear()
             self._warm.clear()
+            self._recent.clear()
+            self._verified = False
             return self._accept(last.index + 1, raw, discontinuity=True)
 
         if self.period is None:
@@ -164,9 +178,14 @@ class SourceClock:
 
     def _accept(self, index: int, raw: float, discontinuity: bool) -> FrameStamp:
         self._hist.append((index, raw))
+        self._recent.append(raw)
+        relocks = self.relocks
         self._update_period()
         if self.period is not None:
-            index = max(index, self._hist[-1][0])  # yeniden numaralama ileri atlatmis olabilir
+            if self.relocks != relocks:
+                index = self._hist[-1][0]  # periyot degisti: sira yeni numaralamadan gelir
+            else:
+                index = max(index, self._hist[-1][0])  # yeniden numaralama ileri atlatmis olabilir
             # Medyan: fazladan guncellemeler ve gec kareler ofseti kaydirmasin.
             res = sorted(r - self.period * i for i, r in self._hist)
             self._offset = res[len(res) // 2]
@@ -202,6 +221,14 @@ class SourceClock:
             # Gecmisi yeni periyotla yeniden numarala (isinmada dusen kareler).
             self._hist = deque(renumber(list(self._hist), p), maxlen=self.window)
             return
+        if not self._verified and self._recent[-1] - self._recent[0] >= self.verify_span:
+            self._verified = True
+            p = estimate_period(list(self._recent), min_span=self.verify_span)
+            if p is not None and abs(p - self.period) > 0.01 * self.period:
+                self.period = p
+                self.relocks += 1
+                self._hist = deque(renumber(list(self._hist), p), maxlen=self.window)
+                return
         if len(self._hist) < self.fit_after or self._hist[-1][0] == self._hist[0][0]:
             return
         # Egim sadece izgaraya uyan karelerden (fazladan guncellemeler egimi bozmasin).

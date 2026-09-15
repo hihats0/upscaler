@@ -4,10 +4,14 @@ BaselineProcessor, Hat 1.1'in taban islemcisidir: model YOK. Iki kare arasi
 dogrusal harman (ara kare) + bicubic buyutme. Amaci hattin (zaman cizgisi,
 tampon, hiz, cikis) dogru calistigini olcmek.
 
-RifeProcessor (Hat 1.2): ara kare RIFE 4.25 ile kaynak cozunurlukte, buyutme
-yine bicubic (SR modeli sonra gelir).
+RifeProcessor (Hat 1.2): ara kare RIFE 4.25 ile kaynak cozunurlukte, buyutme bicubic.
+RifeFlowProcessor: RIFE akisi yarim cozunurlukte, kaydirma kaynak cozunurlukte, bicubic.
+SrProcessor (Hat 1.2): ara kare (rife-flow ya da harman) kaynak cozunurlukte, buyutme
+gercek SR modeli (RT4KSR x2, TensorRT). split=True: sol yari SR, sag yari bicubic.
 """
 from __future__ import annotations
+
+import os
 
 import torch
 import torch.nn.functional as F
@@ -100,7 +104,6 @@ class RifeFlowProcessor(BaselineProcessor):
         """TensorRT motoru bu boyut icin varsa onu, yoksa PyTorch'u kullanir."""
         if not self.trt:
             return self.rf.flow(sa, sb, alpha)
-        import os
         h, w = sa.shape[2:]
         m = self.rf.rife.multiple
         ph, pw = (h + m - 1) // m * m, (w + m - 1) // m * m
@@ -125,22 +128,185 @@ class RifeFlowProcessor(BaselineProcessor):
         return out["flow"][:, :, :h, :w].float(), torch.sigmoid(out["mask"][:, :, :h, :w].float())
 
     @torch.inference_mode()
-    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
-        if alpha <= self.EPS:
-            return self.upscale(self.to_float(a_bgra, self.dtype))
-        if alpha >= 1.0 - self.EPS:
-            return self.upscale(self.to_float(b_bgra, self.dtype))
+    def mid_rgb(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        """Ara kare, kaynak cozunurlugunde RGB 0..1 (self.dtype)."""
         a = self.to_float(a_bgra, self.dtype).flip(1) / 255.0
         b = self.to_float(b_bgra, self.dtype).flip(1) / 255.0
         h, w = round(a.shape[2] * self.flow_scale), round(a.shape[3] * self.flow_scale)
         sa = F.interpolate(a, size=(h, w), mode="bilinear", align_corners=False, antialias=True)
         sb = F.interpolate(b, size=(h, w), mode="bilinear", align_corners=False, antialias=True)
         flow, mask = self._flow(sa, sb, alpha)
-        mid = self.rf.synthesize(a, b, flow, mask)
-        return self.upscale(mid.flip(1) * 255.0)
+        return self.rf.synthesize(a, b, flow, mask)
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        if alpha <= self.EPS:
+            return self.upscale(self.to_float(a_bgra, self.dtype))
+        if alpha >= 1.0 - self.EPS:
+            return self.upscale(self.to_float(b_bgra, self.dtype))
+        return self.upscale(self.mid_rgb(a_bgra, b_bgra, alpha).flip(1) * 255.0)
 
 
-def make_processor(name: str, out_h: int = 2160, out_w: int = 3840) -> BaselineProcessor:
+class SrUpscaler:
+    """SR modeli: RGB 0..1 [1,3,H,W] -> RGB 0..1 [1,3,sH,sW].
+
+    Her girdi boyutu icin weights/trt/sr_<ad>_<W>x<H>_fp16.engine varsa TensorRT, yoksa PyTorch.
+    Dikkat: TensorRT cikti tamponu sonraki cagrida uzerine yazilir.
+    """
+
+    def __init__(self, name: str = "rt4ksr-x2", dtype: torch.dtype = torch.float16, trt: bool = True) -> None:
+        self.name, self.dtype, self.trt = name, dtype, trt
+        self.net: torch.nn.Module | None = None
+        self._engines: dict[tuple[int, int], object] = {}
+
+    def _engine(self, h: int, w: int):
+        key = (h, w)
+        if key not in self._engines:
+            from .models.rife import ROOT
+            path = os.path.join(ROOT, "weights", "trt", f"sr_{self.name}_{w}x{h}_fp16.engine")
+            if self.trt and os.path.exists(path):
+                from .models.trt_engine import TrtEngine
+                self._engines[key] = TrtEngine(path)
+            else:
+                if self.trt:
+                    print(f"[sr] motor yok ({w}x{h}), PyTorch kullaniliyor: "
+                          f"tools/build_trt_sr.py --model {self.name} --h {h} --w {w}")
+                self._engines[key] = None
+        return self._engines[key]
+
+    @torch.inference_mode()
+    def __call__(self, rgb: torch.Tensor) -> torch.Tensor:
+        h, w = rgb.shape[2:]
+        ph, pw = h + h % 2, w + w % 2  # PixelUnshuffle cift boyut ister
+        x = rgb.to(self.dtype)
+        if (ph, pw) != (h, w):
+            x = F.pad(x, (0, pw - w, 0, ph - h), mode="replicate")
+        eng = self._engine(ph, pw)
+        if eng is not None:
+            y = eng(x=x)["y"]
+        else:
+            if self.net is None:
+                from .models.sr import load_sr
+                self.net = load_sr(self.name).to(self.dtype)
+            y = self.net(x)
+        s = y.shape[2] // ph
+        return y[:, :, :h * s, :w * s] if (ph, pw) != (h, w) else y
+
+
+class SrProcessor(BaselineProcessor):
+    """Ara kare kaynak cozunurlugunde (rife-flow ya da harman), buyutme SR modeliyle.
+
+    split=True: kiyas modu, sol yari SR, sag yari ayni ara karenin bicubic buyutmesi.
+    """
+
+    EPS = 1e-3
+
+    def __init__(self, sr_name: str = "rt4ksr-x2", interp: str = "rife-flow", split: bool = False,
+                 out_h: int = 2160, out_w: int = 3840, dtype: torch.dtype = torch.float16, trt: bool = True) -> None:
+        super().__init__(out_h, out_w, dtype)
+        if interp not in ("rife-flow", "lerp"):
+            raise ValueError(f"bilinmeyen ara kare yontemi: {interp}")
+        self.sr = SrUpscaler(sr_name, dtype, trt)
+        self.flow = RifeFlowProcessor("4.25", 0.5, out_h, out_w, dtype, trt=trt) if interp == "rife-flow" else None
+        self.split = split
+        self._out: torch.Tensor | None = None
+        self._fit: tuple[int, int, int, int] | None = None
+        self.name = f"{interp}{'-trt' if trt else ''}+{sr_name}{'+split' if split else ''}"
+
+    def rgb(self, bgra: torch.Tensor) -> torch.Tensor:
+        return self.to_float(bgra, self.dtype).flip(1) / 255.0
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        if alpha <= self.EPS:
+            mid = self.rgb(a_bgra)
+        elif alpha >= 1.0 - self.EPS:
+            mid = self.rgb(b_bgra)
+        elif self.flow is not None:
+            mid = self.flow.mid_rgb(a_bgra, b_bgra, alpha)
+        else:
+            mid = torch.lerp(self.rgb(a_bgra), self.rgb(b_bgra), alpha)
+        return self.finish(mid)
+
+    def finish(self, mid: torch.Tensor) -> torch.Tensor:
+        """RGB 0..1 kaynak cozunurlugu -> (1, 3, out_h, out_w) uint8 BGR (tampon yeniden kullanilir)."""
+        fit = fit_size(mid.shape[2], mid.shape[3], self.out_h, self.out_w)
+        h, w, top, left = fit
+        if self._out is None or self._out.device != mid.device:
+            self._out = torch.zeros((1, 3, self.out_h, self.out_w), dtype=torch.uint8, device=mid.device)
+        if fit != self._fit:  # kaynak boyutu degisti: eski kenar bosluklarini temizle
+            self._out.zero_()
+            self._fit = fit
+        out = self._out
+        sr = self.sr(mid)
+        if sr.shape[2:] != (h, w):
+            sr = F.interpolate(sr.float(), size=(h, w), mode="bilinear", align_corners=False, antialias=True)
+        y = sr.flip(1)  # RGB -> BGR (kopya)
+        out[:, :, top:top + h, left:left + w].copy_(y.mul_(255.0).add_(0.5).clamp_(0, 255))
+        if self.split:
+            half = self.out_w // 2
+            x0 = max(half - left, 0)
+            if x0 < w:
+                bic = F.interpolate(mid.flip(1) * 255.0, size=(h, w), mode="bicubic", align_corners=False)
+                out[:, :, top:top + h, left + x0:left + w].copy_(bic[:, :, :, x0:].add_(0.5).clamp_(0, 255))
+                out[:, :, top:top + h, max(half - 2, 0):half + 2] = 255  # ayirici cizgi
+        return out
+
+
+class FusedSrProcessor(BaselineProcessor):
+    """Karma yol (models/fused.py): ara karede akis TensorRT + warp PyTorch, SR + cikti donusumu
+    (RGB->BGR, uint8, siyah bant) tek TensorRT motorunda. Gercek karede BGRA -> 4K tek motorda.
+
+    Motor yoksa ayri parcali SrProcessor'a duser. Donen tensor motorun cikti tamponudur,
+    sonraki cagrida uzerine yazilir.
+    """
+
+    EPS = 1e-3
+
+    def __init__(self, sr_name: str = "rt4ksr-x2", out_h: int = 2160, out_w: int = 3840,
+                 dtype: torch.dtype = torch.float16) -> None:
+        super().__init__(out_h, out_w, dtype)
+        self.sr_name = sr_name
+        self.flow = RifeFlowProcessor("4.25", 0.5, out_h, out_w, dtype, trt=True)
+        self._engines: dict[tuple[int, int], tuple | None] = {}
+        self._fallback: SrProcessor | None = None
+        self.name = f"rife-flow-trt+{sr_name}+fused-out"
+
+    def _get(self, h: int, w: int):
+        key = (h, w)
+        if key not in self._engines:
+            from .models.fused import engine_paths
+            paths = engine_paths(self.sr_name, h, w, self.out_h, self.out_w)
+            if os.path.exists(paths["still"]) and os.path.exists(paths["rgbsr"]):
+                from .models.trt_engine import TrtEngine
+                self._engines[key] = (TrtEngine(paths["still"]), TrtEngine(paths["rgbsr"]))
+            else:
+                print(f"[fused] motor yok ({w}x{h}), ayri parcalar kullaniliyor: "
+                      f"tools/build_trt_pipeline.py --h {h} --w {w}")
+                self._engines[key] = None
+        return self._engines[key]
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        eng = self._get(*a_bgra.shape[:2])
+        if eng is None:
+            if self._fallback is None:
+                self._fallback = SrProcessor(self.sr_name, "rife-flow", False, self.out_h, self.out_w, self.dtype)
+            return self._fallback(a_bgra, b_bgra, alpha)
+        still, rgbsr = eng
+        if alpha <= self.EPS:
+            return still(a=a_bgra)["y"]
+        if alpha >= 1.0 - self.EPS:
+            return still(a=b_bgra)["y"]
+        return rgbsr(x=self.flow.mid_rgb(a_bgra, b_bgra, alpha).to(torch.float16))["y"]
+
+
+PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt",
+              "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr"]
+
+
+def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "rt4ksr-x2",
+                   split: bool = False) -> BaselineProcessor:
     if name == "baseline":
         return BaselineProcessor(out_h, out_w)
     if name == "rife":
@@ -153,4 +319,12 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840) -> BaselineP
         return RifeFlowProcessor("4.25.lite", 0.5, out_h, out_w)
     if name == "rife-flow-trt":
         return RifeFlowProcessor("4.25", 0.5, out_h, out_w, trt=True)
+    if name == "sr":
+        return SrProcessor(sr, "lerp", split, out_h, out_w, trt=True)
+    if name == "rife-flow-sr":
+        return SrProcessor(sr, "rife-flow", split, out_h, out_w, trt=False)
+    if name == "rife-flow-trt-sr":
+        return SrProcessor(sr, "rife-flow", split, out_h, out_w, trt=True)
+    if name == "fused-sr":  # kiyas modu kaynasik motorda yok: ayri parcalara duser
+        return SrProcessor(sr, "rife-flow", True, out_h, out_w, trt=True) if split else FusedSrProcessor(sr, out_h, out_w)
     raise ValueError(f"bilinmeyen islemci: {name}")

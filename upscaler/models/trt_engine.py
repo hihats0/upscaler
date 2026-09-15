@@ -9,6 +9,7 @@ _DTYPES = {
     trt.DataType.HALF: torch.float16,
     trt.DataType.INT32: torch.int32,
     trt.DataType.BOOL: torch.bool,
+    trt.DataType.UINT8: torch.uint8,
 }
 
 

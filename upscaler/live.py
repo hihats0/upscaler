@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 from . import winutil
 from .capture import WgcSource
-from .process import make_processor
+from .process import PROCESSORS, make_processor
 from .ring import GpuFrameRing
 
 
@@ -42,9 +42,12 @@ class LiveConfig:
     min_interval_ms: int = 1
     report_every: float = 1.0
     quiet: bool = False
-    proc: str = "baseline"  # baseline | rife | rife-lite
-    dump_timing: str | None = None  # CSV yolu: benzersiz kare zamanlari (goruntu yok)
+    proc: str = "baseline"  # process.PROCESSORS
+    # CSV yolu: benzersiz kare zamanlari + <ad>_ticks.csv cikis tikleri (sadece sayi, goruntu yok)
+    dump_timing: str | None = None
     snap: bool = True  # cikisi kaynak+cikis ortak izgarasina hizala
+    sr: str = "rt4ksr-x2"  # *-sr islemcilerinin SR modeli
+    split: bool = False  # kiyas: sol yari SR, sag yari bicubic
 
 
 def _snap_grid(period: float | None, out_fps: float) -> tuple[float, int] | None:
@@ -96,7 +99,7 @@ def run(cfg: LiveConfig) -> dict:
 
     capacity = math.ceil((cfg.delay + 1.0) * 60)
     ring = GpuFrameRing(capacity)
-    proc = make_processor(cfg.proc, cfg.out_h, cfg.out_w)
+    proc = make_processor(cfg.proc, cfg.out_h, cfg.out_w, sr=cfg.sr, split=cfg.split)
     # Isinma: ilk CUDA cagrilari (cekirdek yukleme, bellek) dongude gec tik yaratmasin.
     for h, w in ((1080, 1920), (1020, 1920), (720, 1280)):
         z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")
@@ -107,13 +110,15 @@ def run(cfg: LiveConfig) -> dict:
     if cfg.pattern:
         from .testpattern import decode
 
-    timing: list[tuple[float, int]] = []  # (raw, barkod): sadece sayi, tekrar oynatma icin
+    timing: list[tuple] = []  # (raw, barkod, sira, ideal t, tekrar): sadece sayi, tekrar oynatma icin
+    tick_log: list[tuple] = []
 
     def on_new_frame(raw: float, bgra: np.ndarray) -> None:
         meta = decode(bgra) if decode else None
+        stamp = ring.push(raw, bgra, meta)
         if cfg.dump_timing:
-            timing.append((raw, -1 if meta is None else meta))
-        ring.push(raw, bgra, meta)
+            timing.append((raw, -1 if meta is None else meta, stamp.index, stamp.t,
+                           int(bool(getattr(stamp, "repeat", False)))))
 
     preview = Preview() if cfg.preview else None
     src = WgcSource(hwnd, on_new_frame, cfg.min_interval_ms).start()
@@ -130,6 +135,7 @@ def run(cfg: LiveConfig) -> dict:
     first_out: float | None = None
     last_out: float | None = None
     real_ticks = 0
+    pending_late = 0
 
     try:
         while True:
@@ -148,6 +154,7 @@ def run(cfg: LiveConfig) -> dict:
             if now - T > period:  # islemci yetismedi: kacan tikleri atla
                 missed = int((now - T) / period)
                 late += missed
+                pending_late += missed
                 k += missed
                 continue
 
@@ -170,8 +177,14 @@ def run(cfg: LiveConfig) -> dict:
                 k += 1
                 continue
             if grid:
+                # Alpha sira numarasindan: kare damgalari (t) yazildiklari andaki ofset tahminiyle
+                # kalir, ofset kaydikca zaman farkindan gelen alpha 1/phases izgarasina oturmaz
+                # (TOD 70 sn: (s - a_t)*300 kusurati p99 0,38; gercek kare tik 0,118, beklenen 0,167).
                 a = p.alpha * phases
-                if abs(a - round(a)) < 0.15:  # kucuk ofset kaymasi oranı bozmasin
+                ai = round((s - origin) / ring.clock.period * phases) / phases - p.a.stamp.index
+                if p.b.stamp.index == p.a.stamp.index + 1 and -0.5 / phases <= ai <= 1 + 0.5 / phases:
+                    p.alpha = min(max(ai, 0.0), 1.0)
+                elif abs(a - round(a)) < 0.15:  # sira atlamasi ya da tutma: zaman oranina don
                     p.alpha = round(a) / phases
             real_ticks += p.alpha <= 1e-3 or p.alpha >= 1 - 1e-3
             try:
@@ -191,6 +204,10 @@ def run(cfg: LiveConfig) -> dict:
             last_out = now
             holds += p.hold
             buffer_ms.append((p.newest_t - s) * 1000)
+            if cfg.dump_timing:
+                tick_log.append((k, T - t0, (t_a - T) * 1000, s, p.alpha, p.a.stamp.index, p.b.stamp.index,
+                                 p.a.stamp.t, p.b.stamp.t, int(p.hold), proc_ms[-1], pending_late, len(ring)))
+                pending_late = 0
             if cfg.pattern:
                 ticks.append((s, p.a.meta, p.b.meta, p.alpha))
             k += 1
@@ -214,12 +231,18 @@ def run(cfg: LiveConfig) -> dict:
     if cfg.dump_timing:
         os.makedirs(os.path.dirname(os.path.abspath(cfg.dump_timing)), exist_ok=True)
         with open(cfg.dump_timing, "w", encoding="utf-8") as f:
-            f.write("raw_s,barcode\n")
-            f.writelines(f"{r:.7f},{c}\n" for r, c in timing)
+            f.write("raw_s,barcode,index,t,repeat\n")
+            f.writelines(f"{r:.7f},{c},{i},{t:.7f},{rep}\n" for r, c, i, t, rep in list(timing))
+        stem, ext = os.path.splitext(cfg.dump_timing)
+        with open(f"{stem}_ticks{ext or '.csv'}", "w", encoding="utf-8") as f:
+            f.write("k,T_s,start_late_ms,s,alpha,a_index,b_index,a_t,b_t,hold,proc_ms,late_before,ring_len\n")
+            for (kk, Ts, sl, ss, al, ai, bi, at, bt, hd, pm, lb, rl) in tick_log:
+                f.write(f"{kk},{Ts:.6f},{sl:.3f},{ss:.7f},{al:.5f},{ai},{bi},{at:.7f},{bt:.7f},{hd},{pm:.3f},{lb},{rl}\n")
     summary = {
         "sure_sn": round(elapsed, 2),
         "kaynak": f"{ring.shape[1]}x{ring.shape[0]}" if ring.shape else None,
         "giris_fps": round(in_fps, 2) if in_fps else None,
+        "wgc_teslim_fps": round(src.delivered / elapsed, 2),
         "saat_periyot_ms": round((ring.clock.period or 0) * 1000, 3),
         "cikis_fps_aktif": (round((out - 1) / (last_out - first_out), 2)
                             if out > 1 and last_out > first_out else None),
@@ -280,8 +303,11 @@ def main() -> None:
     ap.add_argument("--pattern", action="store_true")
     ap.add_argument("--foreground", action="store_true", help="kaynak pencereyi basta one al")
     ap.add_argument("--no-snap", action="store_true", help="cikisi kaynak izgarasina hizalama")
-    ap.add_argument("--proc", default="baseline",
-                    choices=["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt"])
+    ap.add_argument("--proc", default="baseline", choices=PROCESSORS)
+    ap.add_argument("--sr", default="rt4ksr-x2", help="*-sr islemcilerinin SR modeli")
+    ap.add_argument("--split", action="store_true", help="kiyas: sol yari SR, sag yari bicubic")
+    ap.add_argument("--dump-timing", metavar="CSV",
+                    help="kare zamanlarini ve cikis tiklerini CSV'ye yaz (goruntu yazilmaz)")
     args = ap.parse_args()
     if args.foreground:
         winutil.dpi_aware()
@@ -289,7 +315,8 @@ def main() -> None:
         time.sleep(0.5)
     summary = run(LiveConfig(title=args.title, delay=args.delay, seconds=args.seconds,
                              out_fps=args.out_fps, preview=not args.no_preview, pattern=args.pattern,
-                             proc=args.proc, snap=not args.no_snap))
+                             proc=args.proc, snap=not args.no_snap, sr=args.sr, split=args.split,
+                             dump_timing=args.dump_timing))
     print("--- ozet")
     for k, v in summary.items():
         print(f"{k}: {v}")

@@ -97,3 +97,17 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 ## Çıkarımlar
 
 - Hız çözülebilir bir sorun. Asıl zorluk kalite: 720p, 25 FPS ve düşük bitrate kaynaktan iyi görüntü çıkarmak.
+
+## SR modelleri canlı hatta (2026-09-15 akşamüstü, 4070 Laptop, 1080p -> 4K)
+
+- EfRLFN x2 (MIT): ağ tam 1080p'de 52 kanal. Eager fp16 306 ms, TensorRT 105 ms. **Canlı 4K60'a sığmaz, elendi.** Makalenin 271 FPS'i 360x480 girdiyle (12 kat az piksel).
+- RT4KSR x2 (Apache-2.0, NTIRE23 RTSR taban modeli): 2x PixelUnshuffle ile 540p'de 24 kanal. Checkpoint eğitim biçiminde, reparam (tek 3x3) birebir doğru. **TensorRT 1080p: 3,13 ms, 1020p: 2,90 ms.** Doğal görüntüde x2 PSNR 35,62 dB, bicubic 32,67 dB.
+- İşlemci ölçümü: rife-flow-trt + RT4KSR ara kare 13,1 ms, gerçek kare 5,2 ms, 50->60 bütçe 707 ms/sn (sığar). Bicubic'li rife-flow-trt 13,0 ms: SR, bicubic kadar ucuz.
+- 4K'da warp + harman 14 ms (1080p'de 2,7 ms): ara kareyi 4K'da üretmek pahalı, önce ara kare sonra SR.
+- LayerNorm FP16'da eps=1e-6 sıfıra yuvarlanır, düz bölgede (siyah bant) 0/0 olur: norm float32'de hesaplanıyor.
+- cuDNN TF32 konvolüsyonu float32 karşılaştırmalarda ~1e-3 fark üretir.
+- TOD oynatıcısı bazen "Bir hata oluştu (SA-...)" ile durur; WGC o zaman neredeyse kare vermez (0,06 FPS). Canlı koşudan önce yayının aktığını kontrol et.
+- Kaynaşık TensorRT (2026-09-15, 1920x1020): tam kaynaşık motor (BGRA -> akış -> warp -> SR -> 4K uint8) ayrı parçalardan hızlı değil (12,6 / 12,1 ms). Kazanç, çıktı dönüşümünü (RGB->BGR, uint8, siyah bant) SR motoruna katmakta: ara kare 10,2 ms, gerçek kare 3,1 ms. TOD canlı p95 15,8 -> 13,9 ms.
+- Önizleme penceresi (pygame, 4K -> 540p + CPU kopyası) işlem süresine ~3-4 ms ekliyor.
+- Saat kilidi: 144 Hz ekranda 1 sn ısınma bazen 50 FPS kaynağı 48 Hz'e kilitliyor (3-3-2 vsync düzeni, 48 Hz skoru 0,28, 50 Hz 0,08). 3 sn'lik pencere bütün kayıtlarda 50 veriyor. Isınmayı uzatmak testleri bozdu; çözüm kilitten sonra 3 sn'lik geçmişle periyodu bir kez doğrulamak (yeniden kilit).
+- Kare damgaları farklı ofset tahminleriyle yazılıyor: çıkış ızgarasına hizalamada alpha zaman farkından değil sıra numarasından hesaplanmalı.

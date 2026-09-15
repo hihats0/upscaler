@@ -74,9 +74,10 @@ class GpuFrameRing:
         self._stream.synchronize()  # pinned tampon bir sonraki karede yeniden kullanilir
         with self._lock:
             was_locked = self.clock.period is not None
+            relocks = self.clock.relocks
             stamp = self.clock.push(raw)
-            if not was_locked and self.clock.period is not None:
-                self._restamp()
+            if (not was_locked and self.clock.period is not None) or self.clock.relocks != relocks:
+                self._restamp()  # ilk kilit ya da periyot dogrulamasi saati yeniden kurdu
             if stamp.fix_prev is not None and self._entries:
                 # Saat, onceki karenin aslinda bir onceki yuvaya ait oldugunu anladi.
                 self.fixes += 1

@@ -2,7 +2,16 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-15 akşam, limit nedeniyle durduruldu)
+## Şu an neredeyiz (2026-09-15 17:00, Hat 1.2 çıkış kriteri karşılandı)
+
+- ✅ **Gerçek SR modeli hatta:** RT4KSR x2 (Apache-2.0), TensorRT 1080p 3,1 ms, doğal görüntüde bicubic'ten +2,9 dB. EfRLFN elendi (1080p'de 105 ms).
+- ✅ **TOD canlı RIFE + RT4KSR 4K60** (`--proc fused-sr`, 70 sn): çıkış 59,97 FPS, geç tik %0,05, işlem p95 13,85 ms, VRAM 1,45 GB. Rapor: `reports/2026-09-15-hat12-sr-modeli.md`.
+- ✅ `--split` (sol SR, sağ bicubic), `--dump-timing` + `tools/analyze_timing.py`.
+- ✅ Düzeltilen hatalar: alpha artık sıra numarasından (gerçek kare tik 0,118 -> 0,167); saat 48 Hz tuzağı (kilitten sonra 3 sn'lik geçmişle periyot doğrulaması).
+- ⚠️ 44,6 FPS anomalisi 4 koşuda tekrarlanmadı, kayıt aracı hazır.
+- **Sıradaki:** gecikmeli ses çalma (Chrome çıkış yönlendirmesi sorusu bekliyor), 1920x1080 (tam ekran) motorları, harici 4K ekranda sunum maliyeti, Hat 1.3 (canlı ölçüm) ya da Hat 2.0 (CC veri, TOD simülatörü; RT4KSR'nin H.264 hasarındaki kalitesi).
+
+## Önceki durum (2026-09-15 akşam, limit nedeniyle durduruldu)
 
 - **Hat 1.1 iskelet kodu var, Hat 1.2 başladı.** Rapor: `reports/2026-09-15-hat11-canli-iskelet-ve-hiz.md`.
 - Canlı hat v0 TOD'da 50→60 FPS 4K (bicubic) akıyor. Ses yakalama çalışıyor, gecikmeli çalma yok.
