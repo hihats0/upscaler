@@ -2,7 +2,20 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-15 17:00, Hat 1.2 çıkış kriteri karşılandı)
+## Şu an neredeyiz (2026-09-15 akşam, Hat 1.4 maç günü sürümü sürüyor)
+
+Görev: tek komutla TOD canlı maçını 4K60, senkron sesle, 90+ dk kesintisiz izlemek. Paketler (sırayla):
+
+1. ✅ Tam ekran ve boyut değişimi: 1920x1080 kaynaşık motorlar derlendi. `process.plan_input` + `fit_bgra`: motoru olmayan boyut en yakın tuvale sığdırılır, tuval yoksa ayrı parçalar. `GpuFrameRing` yeniden ayırmada eski seçimleri canlı tutar (generation). Test: `tests/test_reconfigure.py`.
+2. ⏳ GPU'da kalan sunucu: `upscaler/present.py` (glfw + GL + CUDA-GL interop, doku doğrulandı, sunum ~1,4 ms). Pencere 1 px kısa (Chrome örtülme). Bench: `python -m upscaler.present --seconds 10 --verify`.
+3. ⏳ Senkron ses: `upscaler/audio.py` (ProcTap -> halka -> DAC zamanıyla kilitli çalma, kayma düzeltmesi). A/V klibi: `tools/make_av_clip.py`.
+4. ⏳ `python -m upscaler watch` (`upscaler/watch.py`), masaüstü .bat, README.
+5. ⏳ Dayanıklılık (watch.py içinde: pencere/yakalama/ses/ekran toparlama, runs/ kayıtları, nvidia-smi).
+6. ⏳ 60-100 dk canlı TOD sınavı.
+
+Yarım kalırsa: `git log`, bu liste ve `runs/watch_*/summary.json` ile devam et.
+
+## Önceki durum (2026-09-15 17:00, Hat 1.2 çıkış kriteri karşılandı)
 
 - ✅ **Gerçek SR modeli hatta:** RT4KSR x2 (Apache-2.0), TensorRT 1080p 3,1 ms, doğal görüntüde bicubic'ten +2,9 dB. EfRLFN elendi (1080p'de 105 ms).
 - ✅ **TOD canlı RIFE + RT4KSR 4K60** (`--proc fused-sr`, 70 sn): çıkış 59,97 FPS, geç tik %0,05, işlem p95 13,85 ms, VRAM 1,45 GB. Rapor: `reports/2026-09-15-hat12-sr-modeli.md`.

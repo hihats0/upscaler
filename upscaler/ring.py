@@ -32,12 +32,17 @@ class Pick:
     hold: bool          # tampon bosaldi, son kare tekrarlaniyor
     newest_t: float
     _ring: "GpuFrameRing" = field(repr=False, default=None)
+    # Secim anindaki slot gorunumleri: kaynak boyutu degisip tampon yeniden ayrilsa da
+    # bu tensorler eski bellegi canli tutar, islem yarida kalmaz.
+    fa: torch.Tensor | None = field(repr=False, default=None)
+    fb: torch.Tensor | None = field(repr=False, default=None)
+    gen: int = 0
 
     def frames(self) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._ring.slots[self.a.slot], self._ring.slots[self.b.slot]
+        return self.fa, self.fb
 
     def release(self) -> None:
-        self._ring._release(self.a.slot, self.b.slot)
+        self._ring._release(self.gen, self.a.slot, self.b.slot)
 
 
 class GpuFrameRing:
@@ -48,6 +53,7 @@ class GpuFrameRing:
         self.slots: torch.Tensor | None = None
         self.shape: tuple[int, int] | None = None
         self.resets = 0
+        self.generation = 0  # her yeniden ayirmada artar; eski secimlerin release'i yok sayilir
         self.restamps = 0
         self.repeats = 0
         self.fixes = 0
@@ -154,6 +160,7 @@ class GpuFrameRing:
         with self._lock:
             if self.shape is not None:
                 self.resets += 1
+            self.generation += 1
             self.shape = (h, w)
             self.slots = None
             torch.cuda.empty_cache()
@@ -190,10 +197,13 @@ class GpuFrameRing:
             for slot in (a.slot, b.slot):
                 self._in_use[slot] = self._in_use.get(slot, 0) + 1
             hold = s > times[-1]
-            return Pick(a, b, alpha, hold, times[-1], self)
+            return Pick(a, b, alpha, hold, times[-1], self,
+                        self.slots[a.slot], self.slots[b.slot], self.generation)
 
-    def _release(self, *slots: int) -> None:
+    def _release(self, gen: int, *slots: int) -> None:
         with self._lock:
+            if gen != self.generation:
+                return  # tampon bu arada yeniden ayrildi: sayim zaten sifirlandi
             for slot in slots:
                 n = self._in_use.get(slot, 0) - 1
                 if n <= 0:

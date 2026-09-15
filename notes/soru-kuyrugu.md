@@ -8,7 +8,7 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 - ~~Yazılım ortamı~~ Cevaplandı 2026-09-15: Yiğit "sen seç" dedi. Python 3.13 + PyTorch + WGC + ProcTap + TensorRT seçildi.
 2. **Öğrencilik:** Öğrenci misin? (GitHub Student Developer Pack gibi programlarda bulut kredisi olabilir, araştırılacak.)
 3. **Disk:** Harici SSD var mı ya da alınabilir mi? (C: 111 GB boş)
-4. **Harici ekran:** Hangi 4K ekran (model, HDMI 2.1 var mı, yenileme hızı)?
+4. ~~Harici ekran~~ Cevaplandı 2026-09-15: **4K ekran yok.** Hat 1.4 laptop ekranında (1080p 144 Hz) doğrulanacak, 4K tarama ekran gelince.
 5. **Zaman:** Haftada bu projeye kabaca kaç saat ayırabilirsin? (Faz sürelerini buna göre konuşuruz.)
 6. **Lisans:** Öneri: kod Apache-2.0, ağırlıklar sadece temiz kaynaklardan. Uygun mu?
 7. **GitHub:** Repo baştan herkese açık mı olsun, yoksa ilk çalışan sürümde mi açılsın?

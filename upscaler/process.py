@@ -25,6 +25,57 @@ def fit_size(src_h: int, src_w: int, out_h: int, out_w: int) -> tuple[int, int, 
     return h, w, (out_h - h) // 2, (out_w - w) // 2
 
 
+def plan_input(h: int, w: int, canvases: list[tuple[int, int]]) -> tuple[int, int] | None:
+    """Kaynak boyutu icin kullanilacak motor tuvali (yukseklik, genislik).
+
+    Tam eslesme varsa o. Yoksa kaynagi en-boy koruyarak en buyuk icerik alaniyla tasiyan tuval
+    (esitlikte kucuk tuval). Hic tuval yoksa None (ayri parcalar).
+    Not: TOD ABR 720p'ye dusse de pencere boyutu degismez (Chrome videoyu pencereye buyutur);
+    boyut degisimi pratikte tam ekran <-> pencere gecisinde olur.
+    """
+    if not canvases:
+        return None
+    if (h, w) in canvases:
+        return (h, w)
+
+    def score(c):
+        fh, fw, _, _ = fit_size(h, w, c[0], c[1])
+        return (fh * fw, -c[0] * c[1])
+    return max(canvases, key=score)
+
+
+def fit_bgra(bgra: torch.Tensor, ch: int, cw: int, out: torch.Tensor | None = None) -> torch.Tensor:
+    """(H, W, 4) uint8 BGRA -> (ch, cw, 4) uint8, en-boy korunur, bosluk siyah, alfa 255 (GPU)."""
+    h, w, top, left = fit_size(bgra.shape[0], bgra.shape[1], ch, cw)
+    if out is None:
+        out = torch.zeros((ch, cw, 4), dtype=torch.uint8, device=bgra.device)
+        out[..., 3] = 255
+    if (h, w) == tuple(bgra.shape[:2]):
+        out[top:top + h, left:left + w].copy_(bgra)
+        out[top:top + h, left:left + w, 3] = 255
+        return out
+    x = bgra[..., :3].permute(2, 0, 1).unsqueeze(0).to(torch.float16)
+    y = F.interpolate(x, size=(h, w), mode="bilinear", align_corners=False, antialias=True)
+    out[top:top + h, left:left + w, :3].copy_(y[0].permute(1, 2, 0).add_(0.5).clamp_(0, 255))
+    return out
+
+
+def available_canvases(sr_name: str, out_h: int = 2160, out_w: int = 3840) -> list[tuple[int, int]]:
+    """weights/trt altinda still + rgbsr motoru birlikte bulunan kaynak boyutlari."""
+    import re
+    from .models.rife import ROOT
+    base = os.path.join(ROOT, "weights", "trt")
+    if not os.path.isdir(base):
+        return []
+    pat = re.compile(rf"pipe_still\+{re.escape(sr_name)}_(\d+)x(\d+)_to{out_w}x{out_h}_fp16\.engine$")
+    found = []
+    for f in os.listdir(base):
+        m = pat.match(f)
+        if m and os.path.exists(os.path.join(base, f.replace("pipe_still+", "pipe_rgbsr+"))):
+            found.append((int(m.group(2)), int(m.group(1))))
+    return sorted(found)
+
+
 class BaselineProcessor:
     name = "baseline"
 
@@ -283,13 +334,20 @@ class FusedSrProcessor(BaselineProcessor):
     EPS = 1e-3
 
     def __init__(self, sr_name: str = "rt4ksr-x2", out_h: int = 2160, out_w: int = 3840,
-                 dtype: torch.dtype = torch.float16, split: bool = False) -> None:
+                 dtype: torch.dtype = torch.float16, split: bool = False,
+                 canvases: list[tuple[int, int]] | None = None) -> None:
         super().__init__(out_h, out_w, dtype)
         self.sr_name = sr_name
         self.split = split
         self.flow = RifeFlowProcessor("4.25", 0.5, out_h, out_w, dtype, trt=True)
         self._engines: dict[tuple[int, int], tuple | None] = {}
         self._fallback: SrProcessor | None = None
+        # Kaynak boyutu -> motor tuvali. Motoru olmayan boyut (pencere, 720p) en yakin tuvale
+        # sigdirilir; boylece her boyut hizli yoldan gecer. Hic tuval yoksa ayri parcalar.
+        self.canvases = available_canvases(sr_name, out_h, out_w) if canvases is None else list(canvases)
+        self._plans: dict[tuple[int, int], tuple[int, int] | None] = {}
+        self._fit_bufs: dict[tuple, torch.Tensor] = {}
+        self.route = "henuz kare yok"
         self.name = f"rife-flow-trt+{sr_name}+fused-out" + ("+split" if split else "")
 
     def _get(self, h: int, w: int):
@@ -306,16 +364,49 @@ class FusedSrProcessor(BaselineProcessor):
                 self._engines[key] = None
         return self._engines[key]
 
+    def _plan(self, h: int, w: int) -> tuple[int, int] | None:
+        key = (h, w)
+        if key not in self._plans:
+            canvas = plan_input(h, w, self.canvases)
+            if canvas is not None and self._get(*canvas) is None:
+                canvas = None
+            self._plans[key] = canvas
+            self._fit_bufs.clear()
+        canvas = self._plans[key]
+        if canvas is None:
+            self.route = f"ayri parcalar {w}x{h}"
+        elif canvas == key:
+            self.route = f"motor {w}x{h}"
+        else:
+            self.route = f"sigdirma {w}x{h}->{canvas[1]}x{canvas[0]}"
+        return canvas
+
+    def _fit(self, bgra: torch.Tensor, canvas: tuple[int, int], slot: int) -> torch.Tensor:
+        key = (tuple(bgra.shape[:2]), canvas, slot)
+        buf = self._fit_bufs.get(key)
+        out = fit_bgra(bgra, canvas[0], canvas[1], buf)
+        self._fit_bufs[key] = out
+        return out
+
     @torch.inference_mode()
     def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
-        eng = self._get(*a_bgra.shape[:2])
-        if eng is None:
+        h, w = a_bgra.shape[:2]
+        canvas = self._plan(h, w)
+        if canvas is None:
             if self._fallback is None:
                 self._fallback = SrProcessor(self.sr_name, "rife-flow", self.split, self.out_h, self.out_w, self.dtype)
+            self._fallback.split = self.split
             return self._fallback(a_bgra, b_bgra, alpha)
-        still, rgbsr = eng
+        still, rgbsr = self._get(*canvas)
+        real = alpha <= self.EPS or alpha >= 1.0 - self.EPS
+        if canvas != (h, w):
+            if real:
+                src = self._fit(a_bgra if alpha <= self.EPS else b_bgra, canvas, 0)
+                a_bgra = b_bgra = src
+            else:
+                a_bgra, b_bgra = self._fit(a_bgra, canvas, 0), self._fit(b_bgra, canvas, 1)
         mid = None
-        if alpha <= self.EPS or alpha >= 1.0 - self.EPS:
+        if real:
             src = a_bgra if alpha <= self.EPS else b_bgra
             y = still(a=src)["y"]
         else:
