@@ -5,7 +5,7 @@ Pencere Windows'un normal ekran yakalama API'siyle (Windows.Graphics.Capture) al
 bellekte işlenir, diske yazılmaz. DRM atlatmaz; yakalanamayan (siyah gelen) içerik işlenmez.
 
 - Ara kare: RIFE 4.25 akışı (TensorRT) + kaynak çözünürlükte kaydırma
-- Büyütme: RT4KSR x2 (Apache-2.0), TensorRT kaynaşık motor
+- Büyütme: RT4KSR x2 (Apache-2.0), futbol + yayın sıkıştırmasıyla ince ayarlı (CC BY klipler), TensorRT kaynaşık motor
 - Sunum: CUDA-OpenGL interop, kare CPU'ya inmez
 - Ses: WASAPI process loopback, görüntü gecikmesine kilitli çalma
 
