@@ -148,6 +148,7 @@ def main() -> None:
     ap.add_argument("--cool", type=float, default=78.0)
     ap.add_argument("--group", type=int, default=6)
     ap.add_argument("--val-shards", type=int, default=4)
+    ap.add_argument("--ema", type=float, default=0.0, help="agirlik EMA'si (0: kapali); dogrulama ve kayit EMA ile")
     args = ap.parse_args()
     device = "cuda"
     torch.backends.cudnn.benchmark = True
@@ -167,6 +168,12 @@ def main() -> None:
     net = RT4KSR(upscale=2, rep=False).to(device)
     ck = torch.load(args.init, map_location="cpu", weights_only=True)
     net.load_state_dict(clean_checkpoint(ck["state_dict"]), strict=True)
+    ema = None
+    if args.ema > 0:
+        import copy
+        ema = copy.deepcopy(net).eval()
+        for p_ in ema.parameters():
+            p_.requires_grad_(False)
     opt = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.iters, eta_min=args.lr * 0.01)
     it, best = 0, -1.0
@@ -176,6 +183,8 @@ def main() -> None:
         opt.load_state_dict(st["opt"])
         sched.load_state_dict(st["sched"])
         it, best = st["it"], st["best"]
+        if ema is not None and "ema" in st:
+            ema.load_state_dict(st["ema"])
         log(f"kaldigi yerden devam: iter {it}, en iyi {best:.3f}")
 
     train_files = shards(args.train)
@@ -216,11 +225,15 @@ def main() -> None:
             loss.backward()
             opt.step()
             sched.step()
+            if ema is not None:
+                with torch.no_grad():
+                    for pe, pn in zip(ema.parameters(), net.parameters()):
+                        pe.lerp_(pn, 1 - args.ema)
             it += 1
             loss_sum += float(loss.detach())
             n_sum += 1
             if it % args.eval_every == 0 or it == args.iters:
-                ev = evaluate(net, val, device)
+                ev = evaluate(ema if ema is not None else net, val, device)
                 dt = time.time() - t_win
                 w.writerow([it, time.strftime("%H:%M:%S"), round(loss_sum / n_sum, 5), f"{sched.get_last_lr()[0]:.2e}",
                             round(ev["psnr"], 4), round(ev["bicubic"], 4), gpu.last.get("sicaklik_c"),
@@ -229,7 +242,7 @@ def main() -> None:
                 mark = ""
                 if ev["psnr"] > best:
                     best = ev["psnr"]
-                    save_release(net, best_rel)
+                    save_release(ema if ema is not None else net, best_rel)
                     mark = " (en iyi, kaydedildi)"
                 log(f"iter {it}: kayip {loss_sum / n_sum:.4f}, dogrulama {ev['psnr']:.3f} dB{mark}, "
                     f"{n_sum / dt:.1f} it/sn, GPU {gpu.last.get('sicaklik_c')} C")
@@ -237,13 +250,13 @@ def main() -> None:
             if time.time() - t_ck > args.ckpt_min * 60 or it == args.iters:
                 tmp = last_path + ".tmp"
                 torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
-                            "it": it, "best": best}, tmp)
+                            "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {})}, tmp)
                 os.replace(tmp, last_path)
                 t_ck = time.time()
     finally:
         tmp = last_path + ".tmp"
         torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
-                    "it": it, "best": best}, tmp)
+                    "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {})}, tmp)
         os.replace(tmp, last_path)
         logf.close()
         gpu.stop()

@@ -18,7 +18,10 @@ Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölç
 - ✅ B3: `tools/live_score.py` / `watch --score`: 60 FPS korunuyor, kaydırma testi -10,5 dB.
 - ✅ B4: bicubic 33,70 / RT4KSR 33,84 dB gerçek kare; RIFE ara kare +4,6 dB. Segmentler: `data/sim/5bgF-5I2P_M_s200_l10_50p.json`, `..._s500_...`.
 
-**C (Hat 2.2 ilk ince ayar): sıradaki.** Kod hazır: `tools/make_pairs.py`, `tools/train_sr.py` (checkpoint, devam, sıcaklık duraklaması), `load_sr` `rt4ksr-x2-<ad>`, `watch --sr`. Plan: havuzu büyüt (daha çok Fabio klibi, ≤ 40 GB), çiftler, ince ayar, TensorRT (`tools/build_trt_pipeline.py --sr rt4ksr-x2-<ad> --h 1080`, `tools/build_trt_sr.py`), `live_score.py ... --sr` ile k200/k500 kıyası.
+**C (Hat 2.2 ilk ince ayar): sürüyor.**
+- ✅ C1: havuz 12 klip, 19,6 GB (10 eğitim, 2 doğrulama; `data/clips/manifest.json`). Çiftler: `data/pairs/train1` (123 shard, ~98 bin yama, 11 GB), `data/pairs/val1` (1800 yama).
+- ✅ ft1 (2 klip, 30 bin adım, L1, lr 2e-4): doğrulama yaması 34,42 dB (hazır 33,65, bicubic 34,34). TensorRT 3,18 ms (aynı hız). Canlı: gerçek kare 34,06 / 34,09 dB (hazır 33,83 / 34,07), SSIM +0,007. Geç tik %0,8 (arka planda CPU işi vardı, temiz koşu gerekli).
+- ⏳ ft2 (10 klip, 60 bin adım, EMA 0,999): `runs/train_ft2.log`. Sonra: `tools/build_trt_sr.py --model rt4ksr-x2-ft2 --h 1080 --w 1920`, `tools/build_trt_pipeline.py --sr rt4ksr-x2-ft2 --h 1080 --w 1920` (+ `--h 1020` pencere tuvali), `tools/live_score.py data/sim/..._s200_... --proc fused-sr --seconds 120 --run-name k200_fused-sr-ft2 -- --sr rt4ksr-x2-ft2` (s500 de), `tools/score_table.py`. İyiyse `WatchConfig.sr` varsayılanı.
 
 ## Önceki durum (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 
