@@ -52,6 +52,14 @@ class RawReader:
         self.p.wait()
 
 
+def clip_path(cid: str) -> str:
+    import glob
+    hits = [p for p in glob.glob(os.path.join(CLIPS, cid + ".*")) if p.endswith((".mp4", ".webm", ".mkv"))]
+    if not hits:
+        raise SystemExit(f"klip yok: {cid}")
+    return hits[0]
+
+
 def duration(path: str) -> float:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
                          capture_output=True, text=True, check=True).stdout
@@ -100,7 +108,7 @@ def main() -> None:
         lr_buf, hr_buf, src_buf = [], [], []
 
     for cid in args.clips:
-        gt = os.path.join(CLIPS, cid + ".mp4")
+        gt = clip_path(cid)
         dur = duration(gt)
         starts = np.arange(args.skip_start, dur - args.seg_seconds - 5, args.seg_every)
         n_clip = 0

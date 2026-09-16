@@ -156,3 +156,11 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Çıkış tiklerinin fazı klip numarasına göre rastgele: GT ızgarası için faz `-(klip no - sıra) mod 5`.
 - **TOD benzeri girdide hazır RT4KSR, bicubic'ten sadece +0,10 dB (SSIM -0,004).** Temiz girdide +2,9 dB idi. RIFE ara kare doğrusal harmandan +4,6 dB. Gerçek kare 33,7 dB, ara kare 30,4-31,6 dB (fused-sr).
 - 1 GT kare kaydırma: 33,8 -> 23,3 dB (ölçüm hizalı).
+
+## İnce ayar hazırlığı (2026-09-16)
+
+- Yama çiftleri: LR 128x128 (1080p ölçek), HR 256x256, düz yamalar atılır (std > 6). 800 yama = ~80-90 MB npz. İki eğitim klibi (16 + 15 segment, 8 sn) ~19 bin yama, 2,1 GB, klip başına ~8 dk (CPU).
+- Doğrulama (val1): 5bgF-5I2P_M 1600 + drone 200 yama. Başlangıç: **hazır RT4KSR 34,82 dB, bicubic 35,82 dB** (dokulu yamalarda hazır model bicubic'in gerisinde). 300 adımlık deneme 35,39'a çıktı.
+- Eğitim hızı: batch 16, bf16 autocast, ~24 it/sn (4070 Laptop), GPU ~64 °C.
+- YouTube indirmesi bu oturumda 20 MB/s'den 2,7 MB/s'ye düştü (tahmin: kısıtlama ya da CPU yükü).
+- Fabio di Mauro kanalının yeni videoları futsal vlogu; 2017-2022 Eccellenza/Interprovinciale maçları işe yarıyor. Kanal URL'si: channel/UCjSoXQgnoKUJVUEmu08Ebwg (@fabiodimaurofficial 404).
