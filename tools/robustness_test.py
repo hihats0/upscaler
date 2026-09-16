@@ -41,6 +41,9 @@ def main() -> None:
     import psutil
     import win32con
     import win32gui
+    sys.path.insert(0, ROOT)
+    from upscaler import winutil
+    winutil.dpi_aware()  # SetWindowPos fiziksel piksel (Windows %125 olcekte 1920 -> 2400 oluyordu)
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-name", default=time.strftime("robust_%Y%m%d_%H%M%S"))
     ap.add_argument("--clip", default=os.path.join(ROOT, "data", "av_test_1080p50.mp4"))
@@ -51,7 +54,7 @@ def main() -> None:
     find_window(TITLE)
     time.sleep(1.0)
     watch = subprocess.Popen([sys.executable, "-m", "upscaler", "watch", "--title", TITLE, "--title-must", "",
-                              "--seconds", "170", "--run-name", args.run_name, "--info"], cwd=ROOT)
+                              "--seconds", "185", "--run-name", args.run_name, "--info"], cwd=ROOT)
     log = []
 
     def step(label: str) -> None:
@@ -84,6 +87,9 @@ def main() -> None:
 
         step("BOYUT: 1280x720")
         win32gui.SetWindowPos(hwnd, 0, 0, 0, 1280, 720, win32con.SWP_NOZORDER)
+        time.sleep(12)
+        step("BOYUT: 2560x1440 (1080p'den buyuk: tampon 1080p'de kalmali)")
+        win32gui.SetWindowPos(hwnd, 0, 0, 0, 2560, 1440, win32con.SWP_NOZORDER)
         time.sleep(12)
         win32gui.SetWindowPos(hwnd, 0, 0, 0, 1920, 1080, win32con.SWP_NOZORDER)
         step("BOYUT: 1920x1080 geri")
@@ -119,6 +125,17 @@ def main() -> None:
     print("yol:", sorted({r["yol"] for r in rows}))
     print("vram reserved bas/son MB:", rows[0]["vram_reserved_mb"], rows[-1]["vram_reserved_mb"],
           "| smi:", rows[0]["vram_smi_mb"], rows[-1]["vram_smi_mb"], "| rss:", rows[0]["rss_mb"], rows[-1]["rss_mb"])
+    vram0, vram1 = float(rows[0]["vram_smi_mb"]), float(rows[-1]["vram_smi_mb"])
+    checks = {
+        "cikis kodu 0": rc == 0,
+        "islem hatasi 0": s.get("islem_hatasi") == 0,
+        "hata olayi yok": not any("hata" in k for k in s["olaylar"]),
+        "VRAM buyumesi < 100 MB": vram1 - vram0 < 100,
+        "son 3 pencere >= 59.5 FPS": all(float(r["cikis_fps"]) >= 59.5 for r in rows[-3:]),
+        "yol sonunda motor 1920x1080": rows[-1]["yol"] == "motor 1920x1080",
+    }
+    for k, v in checks.items():
+        print(f"[{'GECTI' if v else 'KALDI'}] {k}")
     for k in ("cikis_fps_aktif", "gec_tik", "bekleme_tik", "tutma_tik", "islem_hatasi", "tampon_sifirlama",
               "yeniden_damgalama", "uctan_uca_ms_p50_p95_p99", "gec_sunum_orani"):
         print(f"{k}: {s.get(k)}")

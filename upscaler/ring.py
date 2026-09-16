@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from .timeline import FrameStamp, SourceClock, pick_frames
 
@@ -46,6 +47,10 @@ class Pick:
 
 
 class GpuFrameRing:
+    # 4K ekranda tam ekran kaynak (3840x2160) 150 slotta ~5 GB olurdu (8 GB VRAM). Motorlar zaten
+    # 1080p tuvalinde; daha buyugu yakalamada kucultulur (Hat 1.4 dayaniklilik sinavi, 2026-09-16).
+    MAX_HW = (1080, 1920)
+
     def __init__(self, capacity: int, device: str = "cuda") -> None:
         self.capacity = capacity
         self.device = device
@@ -61,6 +66,8 @@ class GpuFrameRing:
         self._tentative: Entry | None = None
         self._orphans: set[int] = set()
         self._pinned: torch.Tensor | None = None
+        self._staging: torch.Tensor | None = None  # buyuk kaynak: tam boy GPU kopyasi, sonra kucultme
+        self._src_shape: tuple[int, int] | None = None
         self._stream = torch.cuda.Stream(device=device)
         self._entries: deque[Entry] = deque()
         self._free: list[int] = []
@@ -68,15 +75,31 @@ class GpuFrameRing:
         self._lock = threading.Lock()
 
     # --- yakalama tarafi (WGC is parcacigi) ---------------------------------
+    def store_size(self, h: int, w: int) -> tuple[int, int]:
+        """Saklama boyutu: 1920x1080'i asan kaynak en-boy korunarak kucultulur (cift boyut)."""
+        mh, mw = self.MAX_HW
+        if h <= mh and w <= mw:
+            return h, w
+        s = min(mh / h, mw / w)
+        return min(mh, int(h * s) // 2 * 2), min(mw, int(w * s) // 2 * 2)
+
     def push(self, raw: float, bgra: np.ndarray, meta: Any = None) -> FrameStamp:
         h, w = bgra.shape[:2]
-        if self.shape != (h, w):
+        if self._src_shape != (h, w):
             self._reallocate(h, w)
         self._pinned_np[...] = bgra
         with self._lock:
             slot = self._take_slot()
         with torch.cuda.stream(self._stream):
-            self.slots[slot].copy_(self._pinned, non_blocking=True)
+            if self._staging is None:
+                self.slots[slot].copy_(self._pinned, non_blocking=True)
+            else:
+                self._staging.copy_(self._pinned, non_blocking=True)
+                x = self._staging[..., :3].permute(2, 0, 1).unsqueeze(0).to(torch.float16)
+                y = F.interpolate(x, size=self.shape, mode="bilinear", align_corners=False, antialias=True)
+                dst = self.slots[slot]
+                dst[..., :3].copy_(y[0].permute(1, 2, 0).add_(0.5).clamp_(0, 255))
+                dst[..., 3] = 255
         self._stream.synchronize()  # pinned tampon bir sonraki karede yeniden kullanilir
         with self._lock:
             was_locked = self.clock.period is not None
@@ -161,10 +184,15 @@ class GpuFrameRing:
             if self.shape is not None:
                 self.resets += 1
             self.generation += 1
-            self.shape = (h, w)
+            self._src_shape = (h, w)
+            self.shape = self.store_size(h, w)
             self.slots = None
+            self._staging = None
             torch.cuda.empty_cache()
-            self.slots = torch.empty((self.capacity, h, w, 4), dtype=torch.uint8, device=self.device)
+            sh, sw = self.shape
+            self.slots = torch.empty((self.capacity, sh, sw, 4), dtype=torch.uint8, device=self.device)
+            if (sh, sw) != (h, w):
+                self._staging = torch.empty((h, w, 4), dtype=torch.uint8, device=self.device)
             self._pinned = torch.empty((h, w, 4), dtype=torch.uint8).pin_memory()
             self._pinned_np = self._pinned.numpy()
             self._entries.clear()

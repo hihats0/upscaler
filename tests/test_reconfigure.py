@@ -102,3 +102,24 @@ def test_fused_processor_without_canvas_falls_back_to_parts():
     y = proc(a, a, 0.0)
     assert y.shape == (1, 3, 270, 480)
     assert proc.route.startswith("ayri")
+
+
+@cuda
+def test_ring_caps_large_sources_to_1080p():
+    """4K ekranda tam ekran Chrome (3840x2160) tamponu 5 GB yapmasin: 1920x1080'e kucultulur."""
+    from upscaler.ring import GpuFrameRing
+    ring = GpuFrameRing(4)
+    big = np.zeros((2160, 3840, 4), np.uint8)
+    big[:, :1920] = 255
+    ring.push(0.0, big)
+    assert ring.shape == (1080, 1920)
+    assert tuple(ring.slots.shape[1:3]) == (1080, 1920)
+    s = ring.slots[ring._entries[-1].slot]
+    assert int(s[540, 100, 0]) == 255 and int(s[540, 1800, 0]) == 0
+    assert (s[..., 3] == 255).all()
+    # 1440p (en-boy farkli degil) ve 1920x1200 (16:10): sigar, en-boy korunur
+    ring.push(0.02, np.full((1200, 1920, 4), 50, np.uint8))
+    assert ring.shape == (1080, 1728)
+    # Sinir icindeki boyut aynen saklanir
+    ring.push(0.04, np.full((1020, 1920, 4), 50, np.uint8))
+    assert ring.shape == (1020, 1920)

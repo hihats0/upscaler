@@ -622,6 +622,7 @@ class Watcher:
         all_proc, all_e2e, all_pres = array("d"), array("d"), array("d")
         end_times, tick_times = array("d"), array("d")
         reopens = presenter.reopens
+        ring_gen = 0
         win = Counter()  # istatistik penceresi
         win_t = t0
         info_t = 0.0
@@ -725,6 +726,12 @@ class Watcher:
                     continue
                 finally:
                     p.release()
+                    if p.gen != ring_gen:
+                        # Tampon yeniden ayrildi; eski slotlar bu secim bitene kadar canliydi. Simdi
+                        # serbest: onbellekte kalirsa her boyut degisiminde VRAM ~1 GB buyuyordu.
+                        ring_gen = p.gen
+                        fa = fb = p.fa = p.fb = None
+                        torch.cuda.empty_cache()
                 t_end = r["t_end"]
                 pm = (t_b - t_a) * 1000
                 em = (t_end - t_a) * 1000
