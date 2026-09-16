@@ -62,6 +62,8 @@ class WatchConfig:
     dump_timing: bool = False
     snap: bool = True
     bring_front: bool = True            # kaynak bulununca one getir (ustu kapali Chrome cizmez)
+    score: str = ""                     # simule klip meta json'u (tools/tod_sim.py): canli puan
+    score_shift: int = 0                # puan kaydirma testi (GT kare)
 
 
 # --- kayit ----------------------------------------------------------------------
@@ -204,7 +206,11 @@ class SourceManager:
     def _on_frame(self, raw: float, bgra: np.ndarray) -> None:
         if bgra.shape[0] < self.MIN_H or bgra.shape[1] < self.MIN_W:
             return  # simge durumu gecisinde gelen kucuk kareler tamponu yeniden ayirmasin
-        stamp = self.ring.push(raw, bgra)
+        meta = None
+        if self.cfg.score:
+            from .score import read_barcode
+            meta = read_barcode(bgra)
+        stamp = self.ring.push(raw, bgra, meta)
         self.unique += 1
         self.last_unique = time.perf_counter()
         if self.timing is not None:
@@ -584,6 +590,13 @@ class Watcher:
         # suresi o arada gecer; ilk kare hazirlik biter bitmez cikar.
         ring = GpuFrameRing(math.ceil((cfg.delay + 1.0) * 60))
         probe = AvProbe() if cfg.av_measure else None
+        scorer = None
+        if cfg.score:
+            from .score import GtBank, LiveScorer
+            bank = GtBank(cfg.score, shift=cfg.score_shift).load()
+            scorer = LiveScorer(bank)
+            log.event("gt_yuklendi", kare=len(bank.frames), sn=round(bank.load_s, 1),
+                      vram_gb=round(torch.cuda.memory_allocated() / 2**30, 2))
         source = SourceManager(cfg, ring, log, probe)
         source.refocus_hwnd = getattr(presenter, "hwnd", None)
         audio = AudioManager(cfg, log, probe) if cfg.audio else None
@@ -651,10 +664,15 @@ class Watcher:
                 # --- tik zamani ---
                 if presenter.mode == "lock":
                     T = presenter.vclock.next_vsync(time.perf_counter())
+                    if scorer is not None:
+                        scorer.idle(T - time.perf_counter() - 0.004)
                 else:
                     T = t0 + k * out_period
                     now = time.perf_counter()
                     if now < T:
+                        if scorer is not None:
+                            scorer.idle(T - now)
+                            now = time.perf_counter()
                         if T - now > 0.002:
                             time.sleep(T - now - 0.0015)
                         while time.perf_counter() < T:
@@ -690,6 +708,9 @@ class Watcher:
                     r = presenter.present(y, info_lines)
                     if probe is not None:
                         probe.on_output_frame(y, r["t_end"], T, p.a.stamp.t)
+                    if scorer is not None:
+                        scorer.offer(y, p.a.meta, p.b.meta, p.alpha, T - t0,
+                                     T + out_period - time.perf_counter())
                 except Exception as e:
                     errors.append(time.perf_counter())
                     tot["islem_hatasi"] += 1
@@ -831,6 +852,9 @@ class Watcher:
         if probe is not None:
             summary["av"] = probe.summary(expected_delay=cfg.delay)
             log.write_json("av_ham.json", probe.dump())
+        if scorer is not None:
+            summary["puan"] = scorer.summary()
+            log.write_json("puan_kareler.json", scorer.dump())
         if cfg.dump_timing:
             path = os.path.join(log.dir, "timing.csv")
             with open(path, "w", encoding="utf-8") as f:
@@ -864,14 +888,18 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--split", action="store_true")
     ap.add_argument("--info", action="store_true", help="bilgi katmani acik baslasin (I)")
     ap.add_argument("--proc", default=d.proc)
+    ap.add_argument("--sr", default=d.sr, help="SR modeli (rt4ksr-x2 ya da ince ayarli rt4ksr-x2-<ad>)")
     ap.add_argument("--run-name", default="")
     ap.add_argument("--av-measure", action="store_true", help="flas+bip test klibiyle A/V olcumu")
+    ap.add_argument("--score", default="", help="simule klip meta json'u: canli PSNR/SSIM (tools/live_score.py)")
+    ap.add_argument("--score-shift", type=int, default=0, help="puan kaydirma testi (GT kare)")
     ap.add_argument("--dump-timing", action="store_true", help="kare ve tik zamanlarini CSV'ye yaz (sadece sayi)")
     a = ap.parse_args(argv)
     cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=a.monitor, vsync=a.vsync,
                       out_fps=a.out_fps, seconds=a.seconds, audio=not a.no_audio, audio_device=a.audio_device,
-                      av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=a.proc, run_name=a.run_name,
-                      av_measure=a.av_measure, dump_timing=a.dump_timing)
+                      av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=a.proc, sr=a.sr, run_name=a.run_name,
+                      av_measure=a.av_measure, dump_timing=a.dump_timing, score=a.score,
+                      score_shift=a.score_shift)
     w = Watcher(cfg)
     summary = w.run()
     print("--- ozet (" + w.log.dir + ")")

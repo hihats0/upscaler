@@ -2,7 +2,22 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
+## Şu an neredeyiz (2026-09-16 13:00, /goal: A -> B -> C, agent otonom)
+
+Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölçüm + 2.0 mini veri + 2.1 TOD simülatörü, C) Hat 2.2 ilk ince ayar. Sırayla.
+
+**A (Hat 1.4):**
+- ✅ A1 kök neden: 3 dk'daki A/V "kayması" kaynaktan (ffplay döngü başında kendi A/V farkı basamak yapıyor). Hattın gecikmeleri sabit (görüntü 1509,5 / ses 1512,3 ms). AvProbe düzeltildi: beklenen gecikmeyle eşleştirme, olay başına `hattin_ekledigi_av` (asıl ölçüt), ham kayıt `av_ham.json`. Commit f25beea.
+- ⏳ A1 60 dk A/V koşusu `runs/av_60dk` (12:40'ta başladı). Ölçüt: hattın eklediği |A/V| <= 40 ms, kayma <= 20 ms. Aynı koşu RSS ve sıcaklık kaydı da veriyor.
+- ⏳ A2 `tools/robustness_test.py --run-name robust1`, A3 `--out-fps 48`, A4 60+ dk TOD (Yiğit TOD'u açmadı: test klibiyle uzun koşu, TOD sonra), A5 rapor.
+- RSS: `PresentStats` sınırsız listeleri sınırlandı.
+
+**B (paralel hazırlık, 60 dk koşu sırasında):**
+- yt-dlp venv'de. CC BY + 4K arama filtresi `sp=EgQwAXAB`. En iyi kaynak: **Fabio di Mauro Official** (İtalyan amatör lig maçları, kendi çekimi, 4K 59,94 FPS, CC BY). Messi/Ronaldo "CC" derlemeleri ve oyun görüntüleri ALINMAZ (yükleyen hak sahibi değil).
+- İndirilen: 63pDvVidZJA, u5w_du22wSQ, 5bgF-5I2P_M (Fabio), O3gD6n0zoik (Mylo drone). `tools/clip_manifest.py` -> `data/clips/manifest.json`.
+- Kod yazıldı, koşulmadı: `tools/tod_sim.py` (59,94 -> setpts 60 -> fps 50, lanczos, x264 High 2 geçiş 4,8 Mbps, kare numarası şeridi), `upscaler/score.py` (GT bankası VRAM, PSNR/SSIM Y), `watch --score/--score-shift`, `tools/live_score.py`.
+
+## Önceki durum (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 
 Görev: tek komutla TOD canlı maçını 4K60, senkron sesle, 90+ dk kesintisiz izlemek. Paketler:
 

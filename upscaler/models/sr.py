@@ -22,19 +22,30 @@ _MODELS = {
 }
 
 
+FT_PREFIX = "rt4ksr-x2-"  # ince ayarli: rt4ksr-x2-<ad> -> weights/rt4ksr/<ad>_best.pth (tools/train_sr.py)
+
+
+def _lookup(name: str) -> tuple[str, int, str]:
+    if name in _MODELS:
+        return _MODELS[name]
+    if name.startswith(FT_PREFIX):
+        rel = f"weights/rt4ksr/{name[len(FT_PREFIX):]}_best.pth"
+        if os.path.exists(os.path.join(ROOT, rel)):
+            return ("rt4ksr", 2, rel)
+    raise ValueError(f"bilinmeyen SR modeli: {name} (secenekler: {sr_names()} ya da {FT_PREFIX}<ad>)")
+
+
 def sr_names() -> list[str]:
     return sorted(_MODELS)
 
 
 def sr_scale(name: str) -> int:
-    return _MODELS[name][1]
+    return _lookup(name)[1]
 
 
 def load_sr(name: str, device: str = "cuda", rep: bool = True) -> torch.nn.Module:
     """rep=False sadece rt4ksr icin: egitim bicimi (reparametrizasyon dogrulamasi)."""
-    if name not in _MODELS:
-        raise ValueError(f"bilinmeyen SR modeli: {name} (secenekler: {sr_names()})")
-    kind, scale, rel = _MODELS[name]
+    kind, scale, rel = _lookup(name)
     path = os.path.join(ROOT, rel)
     if kind == "efrlfn":
         from third_party.efrlfn.arch import EfRLFN

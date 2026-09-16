@@ -124,3 +124,13 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - İlk denemede kaynak/ses yönetimi (ProcTap başlatma, öne getirme) çıkış döngüsünde 7 sn bloke etti (444 geç tik): yönetim ayrı iş parçacığına alındı.
 - ProcTap parça gelmeden `alive()` yanlış "ölü" diyordu: başlangıç payı eklendi.
 - A/V 3 dk (ffplay flaş+bip klibi): ffplay'in kendi A/V farkı medyan 46 ms, çıkış 49 ms, hattın eklediği 2,8 ms. Çıkış farkı 3 dk'da 37 -> 59 ms kaydı: incelenmedi (tahmin: ölçüm eşleştirmesi ya da sunum gecikmesi EMA'sı).
+
+## A/V kayması incelemesi (2026-09-16)
+
+- **3 dk'daki 37 -> 59 ms "kayma" hattın değil kaynağın (ffplay).** İkinci koşuda (`runs/av_3dk_b`, ham kayıt `av_ham.json`) girdideki A/V (ffplay'in kendi farkı) t≈110 sn'de 63 -> 42 ms **basamak** yaptı (klip 60 sn'de bir başa sarıyor). Çıkış A/V aynı basamağı izledi. Doğrusal eğim bunu -600 ms/saat "kayma" diye raporluyordu.
+- Hattın gecikmeleri sabit: görüntü (ham flaş -> swap) medyan 1509,5 ms, ses (tahmini yakalama -> DAC) 1512,3 ms. Yakalama saati c0 3 dk'da en fazla 1,8 ms oynadı, fs 47999,7-48000,2.
+- Olay başına hattın eklediği A/V `(ses çıkış - ses giriş) - (görüntü çıkış - görüntü giriş)`: medyan 3,2 ms, p5-p95 -10..+14 ms (çıkış tik ızgarası 16,7 ms). Asıl ölçüt bu (kaynağın kendi A/V'sinden bağımsız).
+- Eski özetteki görüntü/ses gecikmesi -491 ms eşleştirme hatasıydı: olaylar 2 sn periyotlu, gecikme 1,5 sn; "en yakın" olay -0,5 sn'deki. Eşleştirme artık beklenen gecikme etrafında.
+- Tahmin: gerçek maçta Chrome'un kendi A/V farkı da ölçülemez (DRM'li içerikte flaş yok); hat bu farkı olduğu gibi taşır (+3 ms).
+- tracemalloc (25 kare iz) RSS'i dakikada ~180 MB şişirir: bellek sızıntısında RSS için kullanılmaz, sadece Python nesne farkı için.
+- `PresentStats` listeleri sınırsızdı (her karede 4 float, ~0,5 MB/dk): sınırlı deque yapıldı.
