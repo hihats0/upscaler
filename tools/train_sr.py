@@ -102,6 +102,30 @@ def fft_loss(sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
     return (torch.fft.rfft2(sr, norm="ortho") - torch.fft.rfft2(hr, norm="ortho")).abs().mean()
 
 
+def fft_amp_loss(sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
+    """F26: sadece genlik spektrumu farki. Karmasik fark faz hatasini cezalandirir ve yine bulaniga
+    kacar; genlik kaybi "bu frekansta hedef kadar enerji var mi" diye bakar, detayi odullendirir."""
+    return (torch.fft.rfft2(sr, norm="ortho").abs() - torch.fft.rfft2(hr, norm="ortho").abs()).abs().mean()
+
+
+class PatchDisc(torch.nn.Module):
+    """F26: GAN ayirt edicisi (kendi kodumuz, sifirdan). 4K yamada yama bazli gercek/uretilmis logitleri.
+    Spektral norm kararlilik icin; sadece egitimde kullanilir, canli hatta yok."""
+
+    def __init__(self, ch: int = 64) -> None:
+        super().__init__()
+        sn = torch.nn.utils.spectral_norm
+        chs = [(3, ch, 1), (ch, ch, 2), (ch, 2 * ch, 1), (2 * ch, 2 * ch, 2), (2 * ch, 4 * ch, 1), (4 * ch, 4 * ch, 2)]
+        layers = []
+        for i, o, st in chs:
+            layers += [sn(torch.nn.Conv2d(i, o, 3, st, 1)), torch.nn.LeakyReLU(0.2, True)]
+        layers.append(sn(torch.nn.Conv2d(4 * ch, 1, 3, 1, 1)))
+        self.net = torch.nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x * 2 - 1)
+
+
 @torch.no_grad()
 def evaluate(net, val: list[tuple[np.ndarray, np.ndarray]], device: str) -> dict:
     net.eval()
@@ -165,12 +189,14 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--eval-every", type=int, default=1000)
     ap.add_argument("--ckpt-min", type=float, default=3.0)
-    ap.add_argument("--hot", type=float, default=88.0)
-    ap.add_argument("--cool", type=float, default=78.0)
+    ap.add_argument("--hot", type=float, default=80.0, help="GPU bu sicakliga cikinca durakla (Yigit 2026-09-16: GPU sagligi)")
+    ap.add_argument("--cool", type=float, default=70.0)
     ap.add_argument("--group", type=int, default=6)
     ap.add_argument("--val-shards", type=int, default=4)
     ap.add_argument("--ema", type=float, default=0.0, help="agirlik EMA'si (0: kapali); dogrulama ve kayit EMA ile")
     ap.add_argument("--fft-weight", type=float, default=0.0, help="F26: frekans kaybi agirligi (0: sadece L1)")
+    ap.add_argument("--gan-weight", type=float, default=0.0, help="F26: GAN kaybi agirligi (0: kapali)")
+    ap.add_argument("--fft-mode", default="complex", choices=["complex", "amp"], help="F26: karmasik fark ya da genlik")
     args = ap.parse_args()
     device = "cuda"
     torch.backends.cudnn.benchmark = True
@@ -199,9 +225,16 @@ def main() -> None:
     opt = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.iters, eta_min=args.lr * 0.01)
     it, best = 0, -1.0
+    disc = opt_d = None
+    if args.gan_weight > 0:
+        disc = PatchDisc().to(device)
+        opt_d = torch.optim.Adam(disc.parameters(), lr=1e-4, betas=(0.9, 0.99))
     if os.path.exists(last_path):
         st = torch.load(last_path, map_location="cpu", weights_only=False)
         net.load_state_dict(st["net"])
+        if disc is not None and "disc" in st:
+            disc.load_state_dict(st["disc"])
+            opt_d.load_state_dict(st["opt_d"])
         opt.load_state_dict(st["opt"])
         sched.load_state_dict(st["sched"])
         it, best = st["it"], st["best"]
@@ -244,11 +277,29 @@ def main() -> None:
                 sr = net(lr_b)
             loss = F.l1_loss(sr.float(), hr_b)
             if args.fft_weight > 0:
-                loss = loss + args.fft_weight * fft_loss(sr.float(), hr_b)
+                ff = fft_amp_loss if args.fft_mode == "amp" else fft_loss
+                loss = loss + args.fft_weight * ff(sr.float(), hr_b)
+            if disc is not None:
+                # uretec adimi: D'yi kandir (D'nin agirliklari bu adimda guncellenmez)
+                for p_ in disc.parameters():
+                    p_.requires_grad_(False)
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    fake_logit = disc(sr.float().clamp(0, 1))
+                loss = loss + args.gan_weight * F.softplus(-fake_logit.float()).mean()
+                for p_ in disc.parameters():
+                    p_.requires_grad_(True)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             sched.step()
+            if disc is not None:
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    real_logit = disc(hr_b)
+                    fake_logit = disc(sr.detach().float().clamp(0, 1))
+                d_loss = F.softplus(-real_logit.float()).mean() + F.softplus(fake_logit.float()).mean()
+                opt_d.zero_grad(set_to_none=True)
+                d_loss.backward()
+                opt_d.step()
             if ema is not None:
                 with torch.no_grad():
                     for pe, pn in zip(ema.parameters(), net.parameters()):
@@ -264,7 +315,12 @@ def main() -> None:
                             gpu.last.get("guc_w"), round(n_sum / dt, 1), round(ev["hf"], 4)])
                 logf.flush()
                 mark = ""
-                if ev["psnr"] > best:
+                if disc is not None:
+                    # GAN: PSNR secimi GAN'siz hale kacar; son hal kaydedilir (<ad>_best.pth = son)
+                    best = ev["psnr"]
+                    save_release(ema if ema is not None else net, best_rel)
+                    mark = " (GAN: son hal kaydedildi)"
+                elif ev["psnr"] > best:
                     best = ev["psnr"]
                     save_release(ema if ema is not None else net, best_rel)
                     mark = " (en iyi, kaydedildi)"
@@ -274,13 +330,15 @@ def main() -> None:
             if time.time() - t_ck > args.ckpt_min * 60 or it == args.iters:
                 tmp = last_path + ".tmp"
                 torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
-                            "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {})}, tmp)
+                            "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {}),
+                            **({"disc": disc.state_dict(), "opt_d": opt_d.state_dict()} if disc is not None else {})}, tmp)
                 os.replace(tmp, last_path)
                 t_ck = time.time()
     finally:
         tmp = last_path + ".tmp"
         torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
-                    "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {})}, tmp)
+                    "it": it, "best": best, **({"ema": ema.state_dict()} if ema is not None else {}),
+                            **({"disc": disc.state_dict(), "opt_d": opt_d.state_dict()} if disc is not None else {})}, tmp)
         os.replace(tmp, last_path)
         logf.close()
         gpu.stop()

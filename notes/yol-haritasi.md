@@ -23,7 +23,9 @@ Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölç
 - ✅ C2: ft2 (10 klip, 60 bin adım, EMA 0,999, 31 dk, maks 77 °C): doğrulama 34,51 dB (hazır 33,65).
 - ✅ C3: TensorRT aynı hız (3,10 ms). Canlı gerçek kare +0,25 / +0,11 dB, SSIM +0,008; 60 FPS, geç tik 0. **Watch varsayılanı `rt4ksr-x2-ft2`** (ağırlık yoksa hazır modele düşer). robust4_ft2 6/6.
 
-**Sıradaki (öneri):** TOD'da 60-100 dk canlı sınav (Yiğit TOD açınca), 4K ekran kontrol listesi, sonra Hat 2.2b: daha çeşitli CC kaynak + bozulma çeşitliliği + aynı hızda biraz büyük model, ya da Hat 2.3 (kendi video modelimiz). Fikirler: `notes/fikir-bankasi.md`.
+**Sıradaki (2026-09-16 akşam):** F26 devam: GAN denemesi (g01/g05, 80/70 °C sınırıyla), sonra canlı puan (`data/sim/*_tod`) + titreme, TOD'da `sharpness_probe --sr`. Rapor: `reports/2026-09-16-f26-tod-yumusaklik.md`.
+
+**Önceki öneri:** TOD'da 60-100 dk canlı sınav (Yiğit TOD açınca), 4K ekran kontrol listesi, sonra Hat 2.2b: daha çeşitli CC kaynak + bozulma çeşitliliği + aynı hızda biraz büyük model, ya da Hat 2.3 (kendi video modelimiz). Fikirler: `notes/fikir-bankasi.md`.
 
 ## Önceki durum (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 

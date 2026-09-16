@@ -53,3 +53,5 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 - 2026-09-15: Yiğit: **"Az dolarla buluta OK'yim, güzel iş çıkacaksa."** Kanıt kapısı ve harcama tavanları önerildi.
 - 2026-09-15: Hedef hâlâ canlı 4K60 mı? Yiğit iki kez sordu. **Evet.** Eski çelişkiler temizlendi, proje notuna "AMAÇ" satırı eklendi. Bulut sadece eğitimde, maç sırasında yok.
 - 2026-09-15: Plan v4 + bulut kuralları (kanıt kapısı, koşu ≤ $10, toplam ≤ $30) onayı? Yiğit: **"He iyi tm."** Onaylandı. Oturum kapandı, yarın Faz 0.
+- ⏳ 2026-09-16: Algısal kayıp (VGG/LPIPS) için hazır ağırlık indirilsin mi (~500 MB, pytorch.org)? GAN tek başına yetmezse sorulacak.
+- ⏳ 2026-09-16: F26 modellerini gerçek TOD'da ölçmek için TOD'da bir tekrar ya da özet tam ekran açık olmalı (`sharpness_probe --window ... --sr rt4ksr-x2-ft2 rt4ksr-x2-<yeni>`).
