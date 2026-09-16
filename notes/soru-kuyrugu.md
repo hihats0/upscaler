@@ -29,7 +29,7 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 
 ## Bekleyen canlı işler (Yiğit'e bağlı)
 
-- ⏳ 2026-09-16: **TOD'da 60-100 dk canlı watch sınavı** (`watch --dump-timing --info --run-name tod_uzun`). Yiğit TOD'u açmadı; uzun koşu test klibiyle yapıldı (`runs/uzun60_info`). Maç ya da canlı yayın açıkken koşulacak.
+- ⏳ 2026-09-16: **TOD'da 60-100 dk canlı watch sınavı** (`watch --dump-timing --info --run-name tod_uzun`). Yiğit TOD'u açmadı; uzun koşu test klibiyle yapıldı (`runs/uzun60_info`). Maç ya da canlı yayın açıkken koşulacak. 2026-09-16 18:13 denemesi (`runs/tod_uzun`): ekranda maç yoktu, 88 sn'de Yiğit durdurdu. Hat 60 FPS, geç tik 0; TOD kare akışı 39. ve 85. sn'de kesildi (yakalama 6 sn'de toparlandı), 88. sn'de TOD penceresi simge durumuna geçti. Laptop ekranı 1080p olduğu için 4K hissi yok. **Tekrar: maç varken ve harici 4K ekran bağlıyken.**
 - ⏳ 4K ekran gelince 5 dk kontrol listesi: `reports/2026-09-16-hat14-mac-gunu-surumu.md`.
 
 ## Keşif testleri (Faz 0)

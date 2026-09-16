@@ -171,3 +171,4 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Canlı: gerçek kare ft2 - hazır = +0,25 / +0,11 dB, SSIM +0,008; ara kare +0,11 / -0,06 dB. TensorRT 3,10 ms (aynı hız). 60 FPS, geç tik 0.
 - Canlı hat CPU yüküne duyarlı: arka planda ffmpeg çift üretimi varken geç tik %0,8-0,9 (boşta 0).
 - Eğitim sırasında GPU en fazla 77 °C (canlı hatta 88 °C).
+- 2026-09-16 (runs/tod_uzun): Durağan TOD sayfasında Chrome kare göndermeyi kesebiliyor (yayin_dondu 1-1,2 sn, yakalama yeniden başlatınca döndü). Sebebi tahmin: içerik durağan ya da upscaler penceresi Chrome'u örttüğü için kısılma. 1080p ekranda 4K çıktı küçültülerek gösterilir, 4K farkı görünmez.
