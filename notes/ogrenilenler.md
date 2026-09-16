@@ -172,3 +172,4 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Canlı hat CPU yüküne duyarlı: arka planda ffmpeg çift üretimi varken geç tik %0,8-0,9 (boşta 0).
 - Eğitim sırasında GPU en fazla 77 °C (canlı hatta 88 °C).
 - 2026-09-16 (runs/tod_uzun): Durağan TOD sayfasında Chrome kare göndermeyi kesebiliyor (yayin_dondu 1-1,2 sn, yakalama yeniden başlatınca döndü). Sebebi tahmin: içerik durağan ya da upscaler penceresi Chrome'u örttüğü için kısılma. 1080p ekranda 4K çıktı küçültülerek gösterilir, 4K farkı görünmez.
+- 2026-09-16 (Yiğit gözü, TOD): beIN logosu keskin, kamera görüntüsü 1080p gibi değil. Yani kaynağın etkili çözünürlüğü 1080p'nin altında (sebep tahmin: yapım zinciri, deinterlace, 4,8 Mbps sıkıştırma). tod_sim.py ise temiz 4K'yı keskin 1080p'ye indiriyor: eğitim bozulması gerçeğe göre fazla temiz. F26.
