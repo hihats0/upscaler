@@ -2,7 +2,7 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-16 13:00, /goal: A -> B -> C, agent otonom)
+## Şu an neredeyiz (2026-09-16 18:20, /goal A -> B -> C bitti; TOD canlı koşusu Yiğit'e bağlı)
 
 Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölçüm + 2.0 mini veri + 2.1 TOD simülatörü, C) Hat 2.2 ilk ince ayar. Sırayla.
 
@@ -18,10 +18,12 @@ Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölç
 - ✅ B3: `tools/live_score.py` / `watch --score`: 60 FPS korunuyor, kaydırma testi -10,5 dB.
 - ✅ B4: bicubic 33,70 / RT4KSR 33,84 dB gerçek kare; RIFE ara kare +4,6 dB. Segmentler: `data/sim/5bgF-5I2P_M_s200_l10_50p.json`, `..._s500_...`.
 
-**C (Hat 2.2 ilk ince ayar): sürüyor.**
-- ✅ C1: havuz 12 klip, 19,6 GB (10 eğitim, 2 doğrulama; `data/clips/manifest.json`). Çiftler: `data/pairs/train1` (123 shard, ~98 bin yama, 11 GB), `data/pairs/val1` (1800 yama).
-- ✅ ft1 (2 klip, 30 bin adım, L1, lr 2e-4): doğrulama yaması 34,42 dB (hazır 33,65, bicubic 34,34). TensorRT 3,18 ms (aynı hız). Canlı: gerçek kare 34,06 / 34,09 dB (hazır 33,83 / 34,07), SSIM +0,007. Geç tik %0,8 (arka planda CPU işi vardı, temiz koşu gerekli).
-- ⏳ ft2 (10 klip, 60 bin adım, EMA 0,999): `runs/train_ft2.log`. Sonra: `tools/build_trt_sr.py --model rt4ksr-x2-ft2 --h 1080 --w 1920`, `tools/build_trt_pipeline.py --sr rt4ksr-x2-ft2 --h 1080 --w 1920` (+ `--h 1020` pencere tuvali), `tools/live_score.py data/sim/..._s200_... --proc fused-sr --seconds 120 --run-name k200_fused-sr-ft2 -- --sr rt4ksr-x2-ft2` (s500 de), `tools/score_table.py`. İyiyse `WatchConfig.sr` varsayılanı.
+**C (Hat 2.2 ilk ince ayar): ✅ bitti.** Rapor: `reports/2026-09-16-hat22-ilk-ince-ayar.md`.
+- ✅ C1: 12 klip 19,6 GB; 98 bin eğitim yaması (11 GB), doğrulama 1800 (ayrı klipler).
+- ✅ C2: ft2 (10 klip, 60 bin adım, EMA 0,999, 31 dk, maks 77 °C): doğrulama 34,51 dB (hazır 33,65).
+- ✅ C3: TensorRT aynı hız (3,10 ms). Canlı gerçek kare +0,25 / +0,11 dB, SSIM +0,008; 60 FPS, geç tik 0. **Watch varsayılanı `rt4ksr-x2-ft2`** (ağırlık yoksa hazır modele düşer). robust4_ft2 6/6.
+
+**Sıradaki (öneri):** TOD'da 60-100 dk canlı sınav (Yiğit TOD açınca), 4K ekran kontrol listesi, sonra Hat 2.2b: daha çeşitli CC kaynak + bozulma çeşitliliği + aynı hızda biraz büyük model, ya da Hat 2.3 (kendi video modelimiz). Fikirler: `notes/fikir-bankasi.md`.
 
 ## Önceki durum (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 

@@ -164,3 +164,10 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Eğitim hızı: batch 16, bf16 autocast, ~24 it/sn (4070 Laptop), GPU ~64 °C.
 - YouTube indirmesi bu oturumda 20 MB/s'den 2,7 MB/s'ye düştü (tahmin: kısıtlama ya da CPU yükü).
 - Fabio di Mauro kanalının yeni videoları futsal vlogu; 2017-2022 Eccellenza/Interprovinciale maçları işe yarıyor. Kanal URL'si: channel/UCjSoXQgnoKUJVUEmu08Ebwg (@fabiodimaurofficial 404).
+
+## İnce ayar sonucu (2026-09-16, rapor: reports/2026-09-16-hat22-ilk-ince-ayar.md)
+
+- ft2 (10 klip, 98 bin yama, 60 bin adım, EMA 0,999, L1, lr 2e-4 kosinüs): doğrulama 34,51 dB (hazır 33,65, bicubic 34,34). EMA'sız ft1 doğrulaması ±0,15 dB dalgalanıyordu.
+- Canlı: gerçek kare ft2 - hazır = +0,25 / +0,11 dB, SSIM +0,008; ara kare +0,11 / -0,06 dB. TensorRT 3,10 ms (aynı hız). 60 FPS, geç tik 0.
+- Canlı hat CPU yüküne duyarlı: arka planda ffmpeg çift üretimi varken geç tik %0,8-0,9 (boşta 0).
+- Eğitim sırasında GPU en fazla 77 °C (canlı hatta 88 °C).

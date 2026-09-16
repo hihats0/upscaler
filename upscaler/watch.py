@@ -51,7 +51,7 @@ class WatchConfig:
     audio_device: str = ""
     av_offset_ms: float = 0.0
     split: bool = False
-    sr: str = "rt4ksr-x2"
+    sr: str = "rt4ksr-x2-ft2"           # ince ayarli (yoksa hazir rt4ksr-x2)
     proc: str = "fused-sr"
     info: bool = False
     log_root: str = os.path.join(ROOT, "runs")
@@ -562,7 +562,11 @@ class Watcher:
         self.log = RunLog(cfg)
 
     def _make_proc(self):
-        proc = make_processor(self.cfg.proc, sr=self.cfg.sr, split=self.cfg.split)
+        from .models.sr import resolve_sr
+        sr = resolve_sr(self.cfg.sr)
+        if sr != self.cfg.sr:
+            self.log.event("sr_yedek", istenen=self.cfg.sr, kullanilan=sr)
+        proc = make_processor(self.cfg.proc, sr=sr, split=self.cfg.split)
         canv = getattr(proc, "canvases", None) or [(1080, 1920)]
         for h, w in canv:
             z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")

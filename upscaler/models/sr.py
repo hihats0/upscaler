@@ -35,6 +35,20 @@ def _lookup(name: str) -> tuple[str, int, str]:
     raise ValueError(f"bilinmeyen SR modeli: {name} (secenekler: {sr_names()} ya da {FT_PREFIX}<ad>)")
 
 
+DEFAULT_SR = "rt4ksr-x2-ft2"  # Hat 2.2 ince ayari (reports/2026-09-16-hat22-ilk-ince-ayar.md)
+
+
+def resolve_sr(name: str) -> str:
+    """Ince ayarli agirlik bu makinede yoksa hazir RT4KSR'ye duser."""
+    try:
+        _lookup(name)
+        return name
+    except ValueError:
+        if name.startswith(FT_PREFIX):
+            return "rt4ksr-x2"
+        raise
+
+
 def sr_names() -> list[str]:
     return sorted(_MODELS)
 

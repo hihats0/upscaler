@@ -106,3 +106,9 @@ def test_sr_letterbox_keeps_aspect_and_black_bars():
     assert out.shape == (1, 3, 128, 192)
     assert (out[:, :, :4] == 0).all() and (out[:, :, 124:] == 0).all()
     assert out[:, :, 4:124].float().mean() > 20
+
+
+def test_resolve_sr_falls_back_for_missing_finetune():
+    from upscaler.models.sr import resolve_sr
+    assert resolve_sr("rt4ksr-x2") == "rt4ksr-x2"
+    assert resolve_sr("rt4ksr-x2-yok_boyle_bir_ad") == "rt4ksr-x2"
