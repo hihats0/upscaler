@@ -197,10 +197,11 @@ void main() { gl_FragColor = vec4(texture2D(tex, gl_TexCoord[0].st).bgr, 1.0); }
 
 @dataclass
 class PresentStats:
-    upload_ms: list[float] = field(default_factory=list)
-    draw_ms: list[float] = field(default_factory=list)
-    swap_ms: list[float] = field(default_factory=list)
-    end_times: list[float] = field(default_factory=list)
+    # Sinirli: 100 dk'lik koşuda sinirsiz float listeleri dakikada ~0,5 MB buyuyordu (2026-09-16).
+    upload_ms: deque[float] = field(default_factory=lambda: deque(maxlen=20000))
+    draw_ms: deque[float] = field(default_factory=lambda: deque(maxlen=20000))
+    swap_ms: deque[float] = field(default_factory=lambda: deque(maxlen=20000))
+    end_times: deque[float] = field(default_factory=lambda: deque(maxlen=20000))
 
 
 class GlPresenter:

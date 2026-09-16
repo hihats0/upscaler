@@ -210,7 +210,7 @@ class SourceManager:
         if self.timing is not None:
             self.timing.append((raw, -1, stamp.index, stamp.t, int(bool(stamp.repeat))))
         if self.probe is not None:
-            self.probe.on_capture_frame(raw, bgra)
+            self.probe.on_capture_frame(raw, bgra, stamp.t)
 
     def _start(self, hwnd: int) -> None:
         from .capture import WgcSource
@@ -382,7 +382,11 @@ class AudioManager:
 # --- A/V olcum sondasi (flas + bip test klibi) ---------------------------------------------
 
 class AvProbe:
-    """Girdide ve cikista flas/bip baslangic zamanlarini toplar (sadece zaman sayilari)."""
+    """Girdide ve cikista flas/bip baslangic zamanlarini toplar (sadece zaman sayilari).
+
+    Ham zamanlar ve saat durumlari `dump()` ile runs/<ad>/av_ham.json'a yazilir: cikistaki A/V
+    kaymasinin kaynaktan mi (girdi A/V), goruntu yolundan mi, ses yolundan mi geldigi ayrilir.
+    """
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -390,28 +394,40 @@ class AvProbe:
         self.flash_out: list[float] = []
         self.beep_in: list[float] = []
         self.beep_out: list[float] = []
+        self.flash_in_stamp: list[float] = []   # flas karesinin zaman cizgisi damgasi
+        self.flash_out_info: list[tuple] = []    # (t_end, tik T, secilen damga)
+        self.clock_log: list[tuple] = []         # (gelis, c0, fs) ~1 sn'de bir
+        self.lag_log: list[tuple] = []           # (T, lag_ema, ses gecikmesi)
         self._fin = self._fout = False
         self._loud_in_t = -1e9
         self._loud_out_t = -1e9
-        self._out_prev: tuple[float, float] | None = None
+        self._clock_t = -1e9
+        self._lag_t = -1e9
 
-    def on_capture_frame(self, raw: float, bgra: np.ndarray) -> None:
+    def on_capture_frame(self, raw: float, bgra: np.ndarray, stamp_t: float | None = None) -> None:
         m = float(bgra[::64, ::64, 1].mean())
         if not self._fin and m > 220:
             self._fin = True
             with self.lock:
                 self.flash_in.append(raw)
+                self.flash_in_stamp.append(raw if stamp_t is None else stamp_t)
         elif self._fin and m < 180:
             self._fin = False
 
-    def on_output_frame(self, y: torch.Tensor, t_end: float) -> None:
+    def on_output_frame(self, y: torch.Tensor, t_end: float, tick: float = 0.0, stamp_t: float = 0.0) -> None:
         m = float(y[0, 1, ::54, ::96].float().mean())
         if not self._fout and m > 200:
             self._fout = True
             with self.lock:
                 self.flash_out.append(t_end)
+                self.flash_out_info.append((t_end, tick, stamp_t))
         elif self._fout and m < 170:
             self._fout = False
+
+    def on_lag(self, tick: float, lag_ema: float, audio_delay: float | None) -> None:
+        if tick - self._lag_t >= 1.0:
+            self._lag_t = tick
+            self.lag_log.append((tick, lag_ema, audio_delay))
 
     @staticmethod
     def _onset(x: np.ndarray, thr: float = 0.2) -> int | None:
@@ -419,6 +435,10 @@ class AvProbe:
         return int(idx[0]) if idx.size else None
 
     def on_capture_chunk(self, end: int, x: np.ndarray, clock) -> None:
+        now = time.perf_counter()
+        if now - self._clock_t >= 1.0 and clock._c0 is not None:
+            self._clock_t = now
+            self.clock_log.append((now, end, clock._c0, clock.fs))
         i = self._onset(x)
         if i is None:
             return
@@ -442,19 +462,30 @@ class AvProbe:
         self._loud_out_t = t
 
     @staticmethod
-    def pair(a: list[float], b: list[float], window: float = 0.5) -> list[tuple[float, float]]:
-        """Her a icin en yakin b (|fark| < window): (a, b - a)."""
+    def pair(a: list[float], b: list[float], window: float = 0.5,
+             expected: float = 0.0) -> list[tuple[float, float]]:
+        """Her a icin a + expected'e en yakin b (|sapma| < window): (a, b - a).
+
+        Olaylar periyodik (2 sn) oldugu icin gecikmeli eslestirmede expected verilmeli."""
         if not a or not b:
             return []
         bb = np.asarray(b)
         out = []
         for t in a:
-            j = int(np.argmin(np.abs(bb - t)))
-            if abs(bb[j] - t) < window:
+            j = int(np.argmin(np.abs(bb - t - expected)))
+            if abs(bb[j] - t - expected) < window:
                 out.append((t, float(bb[j] - t)))
         return out
 
-    def summary(self) -> dict:
+    @staticmethod
+    def _slope_ms_h(pairs: list[tuple[float, float]]) -> float | None:
+        if len(pairs) < 3 or pairs[-1][0] - pairs[0][0] < 60:
+            return None
+        ts = np.array([t for t, _ in pairs])
+        ds = np.array([d for _, d in pairs]) * 1000
+        return round(float(np.polyfit(ts - ts[0], ds, 1)[0] * 3600), 1)
+
+    def summary(self, expected_delay: float = 1.5) -> dict:
         with self.lock:
             fin, fout, bin_, bout = list(self.flash_in), list(self.flash_out), list(self.beep_in), list(self.beep_out)
         d_in = self.pair(fin, bin_)
@@ -467,19 +498,45 @@ class AvProbe:
             res["kaynak_av_ms_medyan"] = round(float(np.median(din)), 1)
             res["cikis_av_ms_medyan_p5_p95"] = [round(float(np.percentile(dout, q)), 1) for q in (50, 5, 95)]
             res["hattin_ekledigi_av_ms_medyan"] = round(float(np.median(dout) - np.median(din)), 1)
-            ts = np.array([t for t, _ in d_out])
-            if ts[-1] - ts[0] > 60:
-                slope = np.polyfit(ts - ts[0], dout, 1)[0]  # ms / sn
-                res["av_kayma_ms_saatte"] = round(float(slope * 3600), 1)
+            sl = self._slope_ms_h(d_out)
+            if sl is not None:
+                res["av_kayma_ms_saatte"] = sl
+                res["kaynak_av_kayma_ms_saatte"] = self._slope_ms_h(d_in)
                 n = len(dout) // 6 or 1
                 res["av_ms_ilk_son_bolum_medyan"] = [round(float(np.median(dout[:n])), 1),
                                                      round(float(np.median(dout[-n:])), 1)]
-            vd = self.pair(fin, fout, window=5.0)
-            ad = self.pair(bin_, bout, window=5.0)
+            vd = self.pair(fin, fout, window=0.5, expected=expected_delay)
+            ad = self.pair(bin_, bout, window=0.5, expected=expected_delay)
+            # Olay basina hattin ekledigi A/V: (ses cikis - ses giris) - (goruntu cikis - goruntu giris).
+            # Kaynagin kendi A/V farkindan (ffplay dongu basamaklari) bagimsizdir; asil olcut budur.
+            vmap = dict(vd)
+            a_t = np.array([t for t, _ in ad])
+            added = []
+            for f, b in d_in:
+                if f not in vmap or not len(a_t):
+                    continue
+                j = int(np.argmin(np.abs(a_t - (f + b))))
+                if abs(a_t[j] - (f + b)) < 1e-6:
+                    added.append((f, ad[j][1] - vmap[f]))
+            if len(added) >= 3:
+                arr = np.array([x for _, x in added]) * 1000
+                res["hattin_ekledigi_av_ms_p5_p50_p95"] = [round(float(np.percentile(arr, q)), 1) for q in (5, 50, 95)]
+                res["hattin_ekledigi_kayma_ms_saatte"] = self._slope_ms_h(added)
+                n = len(arr) // 6 or 1
+                res["hattin_ekledigi_ilk_son_bolum_ms"] = [round(float(np.median(arr[:n])), 1),
+                                                           round(float(np.median(arr[-n:])), 1)]
             if vd and ad:
                 res["goruntu_gecikmesi_ms_medyan"] = round(float(np.median([d for _, d in vd])) * 1000, 1)
                 res["ses_gecikmesi_ms_medyan"] = round(float(np.median([d for _, d in ad])) * 1000, 1)
+                res["goruntu_gecikmesi_kayma_ms_saatte"] = self._slope_ms_h(vd)
+                res["ses_gecikmesi_kayma_ms_saatte"] = self._slope_ms_h(ad)
         return res
+
+    def dump(self) -> dict:
+        with self.lock:
+            return {"flash_in": self.flash_in, "flash_in_stamp": self.flash_in_stamp, "beep_in": self.beep_in,
+                    "flash_out": self.flash_out, "flash_out_info": self.flash_out_info, "beep_out": self.beep_out,
+                    "clock_log": self.clock_log, "lag_log": self.lag_log}
 
 
 # --- ana dongu ------------------------------------------------------------------------
@@ -632,7 +689,7 @@ class Watcher:
                     t_b = time.perf_counter()
                     r = presenter.present(y, info_lines)
                     if probe is not None:
-                        probe.on_output_frame(y, r["t_end"])
+                        probe.on_output_frame(y, r["t_end"], T, p.a.stamp.t)
                 except Exception as e:
                     errors.append(time.perf_counter())
                     tot["islem_hatasi"] += 1
@@ -658,6 +715,8 @@ class Watcher:
                 lag_ema = lag if lag_ema is None else lag_ema + 0.02 * (lag - lag_ema)
                 if audio is not None:
                     audio.set_delay(cfg.delay + lag_ema + cfg.av_offset_ms / 1000)
+                if probe is not None:
+                    probe.on_lag(T, lag_ema, cfg.delay + lag_ema + cfg.av_offset_ms / 1000)
                 tot["cikis"] += 1
                 win["cikis"] += 1
                 if p.hold:
@@ -770,7 +829,8 @@ class Watcher:
                               "hata_ms_p50_p99_abs": [round(_pct(errs, 50), 2), round(_pct(errs, 99), 2)],
                               "yakalama_fs": round(audio.clock.fs, 2)}
         if probe is not None:
-            summary["av"] = probe.summary()
+            summary["av"] = probe.summary(expected_delay=cfg.delay)
+            log.write_json("av_ham.json", probe.dump())
         if cfg.dump_timing:
             path = os.path.join(log.dir, "timing.csv")
             with open(path, "w", encoding="utf-8") as f:
