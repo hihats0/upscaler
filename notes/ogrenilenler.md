@@ -134,3 +134,15 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - Tahmin: gerçek maçta Chrome'un kendi A/V farkı da ölçülemez (DRM'li içerikte flaş yok); hat bu farkı olduğu gibi taşır (+3 ms).
 - tracemalloc (25 kare iz) RSS'i dakikada ~180 MB şişirir: bellek sızıntısında RSS için kullanılmaz, sadece Python nesne farkı için.
 - `PresentStats` listeleri sınırsızdı (her karede 4 float, ~0,5 MB/dk): sınırlı deque yapıldı.
+- 60 dk A/V (`runs/av_60dk`, test klibi, ölçülü): hattın eklediği A/V medyan 5,4 ms (p5-p95 -8..+16), kayma -0,7 ms/saat; görüntü/ses gecikmesi kayması 0,5 / -0,2 ms/saat. Çıkış 59,994 FPS, geç tik 20/215857 (%0,009), geç sunum %0,23, ses sert atlama 0. RSS 1280 -> 1163 MB (büyüme yok), VRAM smi 2595 MB sabit. GPU ort. 85,5 °C, maks 88 °C, ~86 W; zamanın %9'unda ısıl yavaşlama bayrağı (0x20). Geç tik kümeleri (620-750 sn, 1850-1860 sn) bu bayrağa denk gelmedi (10 sn çözünürlükte).
+
+## Dayanıklılık (2026-09-16)
+
+- Windows %125 ölçekte DPI farkında olmayan araç `SetWindowPos(1920, 1080)` ile pencereyi fiziksel 2400x1350 yapıyor. Sınav aracı artık `winutil.dpi_aware()` çağırıyor.
+- **4K ekran riski:** tampon kaynak boyutunda 150 kare tutuyordu; 2400x1350 pencere 2 GB, 3840x2160 (4K ekranda tam ekran Chrome) ~5 GB olurdu. Tampon artık 1920x1080'i aşan kareyi GPU'da küçültüp saklıyor (`GpuFrameRing.MAX_HW`).
+- Tampon yeniden ayrılırken işlemdeki seçim eski slotları tutuyor, `empty_cache` bırakamıyordu (her boyut değişiminde +1 GB). Ana döngü, nesil değişen seçimi bıraktıktan sonra önbelleği bir kez boşaltıyor. robust3: VRAM +16 MB, tüm kontroller geçti.
+- Boyut değişiminde tampon sıfırlanır, 1,5 sn gecikme dolana kadar son kare tutulur (o 10 sn penceresinde ~51 FPS görünür, işlem yavaşlığı değil). Sunucu yeniden açılması (ekran değişimi) ~1,2 sn'de 75 geç tik yapar (tek seferlik).
+
+## Kilit modu (2026-09-16, `runs/lock48`)
+
+- 144 Hz laptop panelinde `--out-fps 48`: mod lock, interval 3. Çıkış 48,03 FPS, geç tik 0, geç sunum 0, sunum aralığı p1/p50/p99 16,5 / 20,8 / 25,2 ms, sunum gecikmesi p99 4,4 ms. Swap vsync beklediği için sunum süresi p50 7,3 ms. Hattın eklediği A/V 1,5 ms. 4K 60 Hz ekranda aynı yol interval 1 ile çalışacak (denenmedi, ekran yok).

@@ -156,11 +156,15 @@ class GtBank:
 class LiveScorer:
     """Cikis dongusunden cagrilir. Bosluk varsa hemen puanlar, yoksa tek kareyi bekletir."""
 
-    def __init__(self, bank: GtBank) -> None:
+    def __init__(self, bank: GtBank, max_per_s: float = 4.0) -> None:
         self.bank = bank
+        self.interval = 1.0 / max_per_s  # 4K SSIM pahali: saniyede birkac kare yeter
+        self._last_t = -1e9
+        self._want = "gercek"  # siniflar sirayla puanlanir
+        self.skipped_rate = 0
         self.metric = YMetric()
         self.rows: list[tuple] = []  # (t, g, sinif, alpha, psnr, ssim)
-        self.skipped_busy = 0
+        self.dropped_pending = 0
         self.skipped_nomatch = 0
         self.no_barcode = 0
         self.cost_ms: list[float] = []
@@ -193,22 +197,30 @@ class LiveScorer:
             self.skipped_nomatch += 1
             return
         real = alpha <= 1e-3 or alpha >= 1 - 1e-3
-        item = (t, g, "gercek" if real else "ara", round(alpha, 3))
+        cls = "gercek" if real else "ara"
+        gap = t - self._last_t
+        if gap < self.interval or (cls != self._want and gap < 2 * self.interval) or self._pending is not None:
+            self.skipped_rate += 1
+            return
+        item = (t, g, cls, round(alpha, 3))
         est = (np.median(self.cost_ms[-50:]) / 1000 if self.cost_ms else 0.006) + 0.002
+        self._last_t = t
+        self._want = "ara" if cls == "gercek" else "gercek"
         if budget_s > est:
             self._score(luma_bgr(y), item)
         else:
-            # Y'yi kopyala (ucuz), bir sonraki bos anda puanla. Bekleyen varsa yenisi atlanir.
-            if self._pending is None:
-                if self._buf is None:
-                    self._buf = torch.empty((y.shape[2], y.shape[3]), dtype=torch.float32, device=y.device)
-                self._buf.copy_(luma_bgr(y))
-                self._pending = item
-            else:
-                self.skipped_busy += 1
+            # Y'yi kopyala (ucuz), bir sonraki bos anda puanla.
+            if self._buf is None:
+                self._buf = torch.empty((y.shape[2], y.shape[3]), dtype=torch.float32, device=y.device)
+            self._buf.copy_(luma_bgr(y))
+            self._pending = item
 
-    def idle(self, budget_s: float) -> None:
+    def idle(self, budget_s: float, t: float | None = None) -> None:
         if self._pending is None:
+            return
+        if t is not None and t - self._pending[0] > 1.0:  # hic bos an bulunamadi: birak
+            self._pending = None
+            self.dropped_pending += 1
             return
         est = (np.median(self.cost_ms[-50:]) / 1000 if self.cost_ms else 0.006) + 0.002
         if budget_s > est:
@@ -226,7 +238,7 @@ class LiveScorer:
     def summary(self) -> dict:
         out = {"gt": self.bank.meta["gt"], "gt_start_s": self.bank.meta["gt_start_s"], "kaydirma": self.bank.shift,
                "gt_yukleme_sn": round(self.bank.load_s, 1), "gt_kare": len(self.bank.frames),
-               "puanlanan": len(self.rows), "mesgul_atlanan": self.skipped_busy,
+               "puanlanan": len(self.rows), "oran_atlanan": self.skipped_rate, "bekleyen_birakilan": self.dropped_pending,
                "eslesmeyen": self.skipped_nomatch, "serit_okunamayan": self.no_barcode,
                "puan_maliyeti_ms_p50_p95": [round(float(np.percentile(self.cost_ms, q)), 2) for q in (50, 95)]
                if self.cost_ms else None}

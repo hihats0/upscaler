@@ -27,6 +27,11 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 
 **Chrome:** Yayın tam ekran (1920x1080) olsun. Başka pencere Chrome'u tamamen kapatmasın (watch bulunca Chrome'u öne alıyor).
 
+## Bekleyen canlı işler (Yiğit'e bağlı)
+
+- ⏳ 2026-09-16: **TOD'da 60-100 dk canlı watch sınavı** (`watch --dump-timing --info --run-name tod_uzun`). Yiğit TOD'u açmadı; uzun koşu test klibiyle yapıldı (`runs/uzun60_info`). Maç ya da canlı yayın açıkken koşulacak.
+- ⏳ 4K ekran gelince 5 dk kontrol listesi: `reports/2026-09-16-hat14-mac-gunu-surumu.md`.
+
 ## Keşif testleri (Faz 0)
 
 - ✅ 2026-09-15: Yakalama testi (agent yaptı, Yiğit "sen yap" dedi): görüntü geliyor, siyah değil.

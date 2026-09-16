@@ -666,13 +666,13 @@ class Watcher:
                 if presenter.mode == "lock":
                     T = presenter.vclock.next_vsync(time.perf_counter())
                     if scorer is not None:
-                        scorer.idle(T - time.perf_counter() - 0.004)
+                        scorer.idle(T - time.perf_counter() - 0.004, T - t0)
                 else:
                     T = t0 + k * out_period
                     now = time.perf_counter()
                     if now < T:
                         if scorer is not None:
-                            scorer.idle(T - now)
+                            scorer.idle(T - now, T - t0)
                             now = time.perf_counter()
                         if T - now > 0.002:
                             time.sleep(T - now - 0.0015)
