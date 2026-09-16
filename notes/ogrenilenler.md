@@ -146,3 +146,13 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 ## Kilit modu (2026-09-16, `runs/lock48`)
 
 - 144 Hz laptop panelinde `--out-fps 48`: mod lock, interval 3. Çıkış 48,03 FPS, geç tik 0, geç sunum 0, sunum aralığı p1/p50/p99 16,5 / 20,8 / 25,2 ms, sunum gecikmesi p99 4,4 ms. Swap vsync beklediği için sunum süresi p50 7,3 ms. Hattın eklediği A/V 1,5 ms. 4K 60 Hz ekranda aynı yol interval 1 ile çalışacak (denenmedi, ekran yok).
+
+## Canlı ölçüm ve veri (2026-09-16, rapor: reports/2026-09-16-hat13-canli-olcum.md)
+
+- Fabio di Mauro Official (YouTube): kendi çektiği İtalyan amatör maçları, 4K 59,94 FPS, CC BY (sayfada doğrulandı). Arama filtresi CC+4K: `sp=EgQwAXAB`. "CC" etiketli yıldız derlemeleri geçersiz (yükleyen hak sahibi değil).
+- YouTube "60 FPS" klipleri 59,94 (60000/1001). tod_sim kareleri sırayla 60 sayar.
+- tod_sim eşleşmesi 40/40 (fps=50:round=near kare seçer), 4800 kbps H.264 High 50p doğrulandı.
+- Canlı puan: 4K SSIM GPU'da bitişik olmayan kırpıkta 54-65 ms, bitişikte 13 ms; ama GPU'da (ayrı akışta bile) TensorRT işini bekletip işlem p99'u 71 ms yaptı. CPU'da (cv2 2 iş parçacığı) ~350 ms/kare, hatta etkisi yok.
+- Çıkış tiklerinin fazı klip numarasına göre rastgele: GT ızgarası için faz `-(klip no - sıra) mod 5`.
+- **TOD benzeri girdide hazır RT4KSR, bicubic'ten sadece +0,10 dB (SSIM -0,004).** Temiz girdide +2,9 dB idi. RIFE ara kare doğrusal harmandan +4,6 dB. Gerçek kare 33,7 dB, ara kare 30,4-31,6 dB (fused-sr).
+- 1 GT kare kaydırma: 33,8 -> 23,3 dB (ölçüm hizalı).

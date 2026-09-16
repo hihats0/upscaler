@@ -12,10 +12,13 @@ Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölç
 - ✅ A3 kilit modu: 144 Hz'de 48 FPS interval 3, geç sunum 0.
 - ✅ A4 (test klibiyle) 60 dk `--dump-timing --info`: 59,999 FPS, geç tik 5, VRAM sabit. ⏳ **TOD 60-100 dk: Yiğit TOD açınca** (`notes/soru-kuyrugu.md`).
 
-**B (Hat 1.3 + 2.0 + 2.1): sıradaki.** Hazırlık:
-- yt-dlp venv'de. CC BY + 4K arama filtresi `sp=EgQwAXAB`. En iyi kaynak: **Fabio di Mauro Official** (İtalyan amatör lig maçları, kendi çekimi, 4K 59,94 FPS, CC BY). Messi/Ronaldo "CC" derlemeleri ve oyun görüntüleri ALINMAZ (yükleyen hak sahibi değil).
-- İndirilen: 63pDvVidZJA, u5w_du22wSQ, 5bgF-5I2P_M (Fabio), O3gD6n0zoik (Mylo drone). `tools/clip_manifest.py` -> `data/clips/manifest.json`.
-- Kod yazıldı, koşulmadı: `tools/tod_sim.py` (59,94 -> setpts 60 -> fps 50, lanczos, x264 High 2 geçiş 4,8 Mbps, kare numarası şeridi), `upscaler/score.py` (GT bankası VRAM, PSNR/SSIM Y), `watch --score/--score-shift`, `tools/live_score.py`.
+**B (Hat 1.3 + 2.0 + 2.1): ✅ bitti.** Rapor: `reports/2026-09-16-hat13-canli-olcum.md`.
+- ✅ B1: 4 CC BY 4K60 klip (4,19 GB), lisans sayfada doğrulandı, `data/clips/manifest.json`. Eğitim: 63pDvVidZJA, u5w_du22wSQ. Doğrulama/puan: 5bgF-5I2P_M, O3gD6n0zoik (eğitime girmez).
+- ✅ B2: `tools/tod_sim.py` (4800 kbps High 50p, hizalama 40/40).
+- ✅ B3: `tools/live_score.py` / `watch --score`: 60 FPS korunuyor, kaydırma testi -10,5 dB.
+- ✅ B4: bicubic 33,70 / RT4KSR 33,84 dB gerçek kare; RIFE ara kare +4,6 dB. Segmentler: `data/sim/5bgF-5I2P_M_s200_l10_50p.json`, `..._s500_...`.
+
+**C (Hat 2.2 ilk ince ayar): sıradaki.** Kod hazır: `tools/make_pairs.py`, `tools/train_sr.py` (checkpoint, devam, sıcaklık duraklaması), `load_sr` `rt4ksr-x2-<ad>`, `watch --sr`. Plan: havuzu büyüt (daha çok Fabio klibi, ≤ 40 GB), çiftler, ince ayar, TensorRT (`tools/build_trt_pipeline.py --sr rt4ksr-x2-<ad> --h 1080`, `tools/build_trt_sr.py`), `live_score.py ... --sr` ile k200/k500 kıyası.
 
 ## Önceki durum (2026-09-15 18:20, Hat 1.4 yarıda: kullanım limiti %91, durduruldu)
 

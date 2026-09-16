@@ -195,6 +195,8 @@ class LiveScorer:
         self._want = "gercek"  # siniflar sirayla puanlanir
         self.rows: list[tuple] = []  # (t, g, sinif, alpha, psnr, ssim)
         self.skipped_rate = 0
+        self.skipped_seen = 0
+        self._seen: set[int] = set()  # her GT karesi bir kez: klip dondukce kapsama buyur, kosular ayni karelerde kiyaslanir
         self.skipped_busy = 0
         self.skipped_budget = 0
         self.not_grid = 0       # icerik konumu GT izgarasina dusmuyor (hizalama)
@@ -264,6 +266,9 @@ class LiveScorer:
         if g is None:
             self.not_in_bank += 1
             return
+        if g in self._seen:
+            self.skipped_seen += 1
+            return
         real = alpha <= 1e-3 or alpha >= 1 - 1e-3
         cls = "gercek" if real else "ara"
         gap = t - self._last_t
@@ -273,7 +278,7 @@ class LiveScorer:
         if self._busy.is_set():
             self.skipped_busy += 1
             return
-        if budget_s < 0.004:
+        if budget_s < 0.0015:  # ana akistaki maliyet ~0,4 ms
             self.skipped_budget += 1
             return
         self._last_t = t
@@ -286,6 +291,7 @@ class LiveScorer:
         ev = torch.cuda.Event()
         ev.record()
         self._busy.set()
+        self._seen.add(g)
         self._job = ((round(t, 3), g, cls, round(alpha, 3)), ev)
         self._wake.set()
         self.copy_ms.append((time.perf_counter() - t0) * 1000)
@@ -303,7 +309,7 @@ class LiveScorer:
     def summary(self) -> dict:
         out = {"gt": self.bank.meta["gt"], "gt_start_s": self.bank.meta["gt_start_s"], "kaydirma": self.bank.shift,
                "gt_yukleme_sn": round(self.bank.load_s, 1), "gt_kare": len(self.bank.frames),
-               "puanlanan": len(self.rows), "oran_atlanan": self.skipped_rate, "mesgul_atlanan": self.skipped_busy,
+               "puanlanan": len(self.rows), "oran_atlanan": self.skipped_rate, "tekrar_atlanan": self.skipped_seen, "mesgul_atlanan": self.skipped_busy,
                "butce_atlanan": self.skipped_budget, "izgara_disi": self.not_grid, "bankada_yok": self.not_in_bank,
                "serit_okunamayan": self.no_barcode, "bosluk": self.gap,
                "y_kopya_ms_p50_p95": [round(float(np.percentile(self.copy_ms, q)), 2) for q in (50, 95)]
