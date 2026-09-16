@@ -62,6 +62,8 @@ def main() -> None:
     ap.add_argument("--kbps", type=int, default=TARGET_KBPS)
     ap.add_argument("--out", default="")
     ap.add_argument("--no-barcode", action="store_true")
+    ap.add_argument("--pre", type=float, default=1.0, help="F26: ön kucultme orani (1080p'ye gore, 1 = yok)")
+    ap.add_argument("--sharp", type=float, default=0.0, help="F26: 1080p'de unsharp miktari (0 = yok)")
     args = ap.parse_args()
     cid = os.path.splitext(os.path.basename(args.gt))[0]
     out = args.out or os.path.join(ROOT, "data", "sim", f"{cid}_s{int(args.start)}_l{int(args.seconds)}_50p.mp4")
@@ -72,8 +74,16 @@ def main() -> None:
         raise SystemExit(f"GT {num / den:.3f} FPS; bu arac 60 (ya da 59,94) FPS GT bekliyor")
     # 59,94 FPS GT'nin kareleri sirayla tam 60 FPS sayilir (icerik %0,1 yavaslar). GT bankasi da
     # kareleri sirayla sayar; boylece 10 sn'de 0,6 karelik kayma birikmez.
-    vf = (f"setpts=N/({GT_FPS}*TB),fps={SIM_FPS}:round=near,scale=1920:1080:flags=lanczos:in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=tv,"
-          "format=yuv420p")
+    color = "in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=tv"
+    if args.pre < 0.999:
+        # F26: gercek TOD kamera goruntusu 1080p'den yumusak (yapim zinciri). Once kucult, sonra 1080p'ye buyut.
+        pw, ph = 2 * round(1920 * args.pre / 2), 2 * round(1080 * args.pre / 2)
+        scale = f"scale={pw}:{ph}:flags=area:{color},scale=1920:1080:flags=bicubic"
+    else:
+        scale = f"scale=1920:1080:flags=lanczos:{color}"
+    if args.sharp > 0:
+        scale += f",unsharp=5:5:{args.sharp}:5:5:0"
+    vf = f"setpts=N/({GT_FPS}*TB),fps={SIM_FPS}:round=near,{scale},format=yuv420p"
     if not args.no_barcode:
         vf += "," + barcode_filter()
     k = args.kbps
@@ -91,7 +101,7 @@ def main() -> None:
     st = probe["streams"][0]
     meta = {"gt": os.path.relpath(args.gt, ROOT).replace("\\", "/"), "gt_start_s": args.start, "seconds": args.seconds,
             "gt_fps": GT_FPS, "sim_fps": SIM_FPS, "barcode": not args.no_barcode, "strip_h_1080": STRIP_H,
-            "hedef_kbps": k, "ffprobe": {"codec": st["codec_name"], "profile": st.get("profile"),
+            "hedef_kbps": k, "pre": args.pre, "sharp": args.sharp, "ffprobe": {"codec": st["codec_name"], "profile": st.get("profile"),
                                          "size": [st["width"], st["height"]], "fps": st["r_frame_rate"],
                                          "kbps": round(int(probe["format"]["bit_rate"]) / 1000),
                                          "frames": st.get("nb_frames"), "color": [st.get("color_space"), st.get("color_range")]}}

@@ -84,6 +84,10 @@ def main() -> None:
     ap.add_argument("--shard", type=int, default=800)
     ap.add_argument("--kbps", type=int, default=4800)
     ap.add_argument("--max-gb", type=float, default=12.0)
+    ap.add_argument("--pre-range", default="1:1", help="F26: segment basina rastgele ön kucultme araligi (ör. 0.5:0.85)")
+    ap.add_argument("--sharp-range", default="0:0", help="F26: segment basina rastgele unsharp araligi")
+    ap.add_argument("--gt-sharp", default="", help="F26: tools/gt_sharpness.py ciktisi; yumusak GT segmentleri atlanir")
+    ap.add_argument("--gt-min", type=float, default=0.0, help="F26: 4K spk_50_75 alt siniri")
     args = ap.parse_args()
     out_dir = os.path.join(ROOT, "data", "pairs", args.name)
     os.makedirs(out_dir, exist_ok=True)
@@ -95,6 +99,11 @@ def main() -> None:
     shard_i = len([f for f in os.listdir(out_dir) if f.startswith("shard_")])
     total_bytes = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
     info = {"clips": {}, "args": vars(args)}
+    pre_lo, pre_hi = map(float, args.pre_range.split(":"))
+    sh_lo, sh_hi = map(float, args.sharp_range.split(":"))
+    gt_sharp = {}
+    if args.gt_sharp:
+        gt_sharp = json.load(open(args.gt_sharp, encoding="utf-8"))["klipler"]
 
     def flush():
         nonlocal shard_i, total_bytes, lr_buf, hr_buf, src_buf
@@ -112,13 +121,21 @@ def main() -> None:
         dur = duration(gt)
         starts = np.arange(args.skip_start, dur - args.seg_seconds - 5, args.seg_every)
         n_clip = 0
+        n_skip = 0
         t_clip = time.perf_counter()
         for s in starts:
             if total_bytes / 1e9 > args.max_gb:
                 break
+            seg_sharp = gt_sharp.get(cid, {}).get("segment", {}).get(str(int(s)), {}).get("spk_50_75")
+            if args.gt_min and (seg_sharp is None or seg_sharp < args.gt_min):
+                n_skip += 1
+                continue
+            pre = float(rng.uniform(pre_lo, pre_hi))
+            sharp = float(rng.uniform(sh_lo, sh_hi))
             sim = os.path.join(sim_dir, f"{cid}_{int(s)}.mp4")
             subprocess.run([sys.executable, os.path.join(HERE, "tod_sim.py"), gt, "--start", str(s), "--seconds",
-                            str(args.seg_seconds), "--no-barcode", "--kbps", str(args.kbps), "--out", sim],
+                            str(args.seg_seconds), "--no-barcode", "--kbps", str(args.kbps), "--out", sim,
+                            "--pre", f"{pre:.3f}", "--sharp", f"{sharp:.3f}"],
                            check=True, stdout=subprocess.DEVNULL)
             lo = RawReader(sim, 1920, 1080)
             hi = RawReader(gt, 3840, 2160, s, args.seg_seconds, pre_vf="setpts=N/(60*TB)")
@@ -146,7 +163,7 @@ def main() -> None:
                             if flat_ok(h):
                                 lr_buf.append(lr[y:y + P, x:x + P].copy())
                                 hr_buf.append(h.copy())
-                                src_buf.append(f"{cid}:{s:.0f}:{i}")
+                                src_buf.append(f"{cid}:{s:.0f}:{i}:p{pre:.2f}:u{sharp:.2f}")
                                 n_clip += 1
                                 break
                         if len(lr_buf) >= args.shard:
@@ -156,8 +173,8 @@ def main() -> None:
             hi.close()
             os.remove(sim)
             os.remove(sim.replace(".mp4", ".json"))
-        info["clips"][cid] = {"yama": n_clip, "sn": round(time.perf_counter() - t_clip)}
-        print(f"{cid}: {n_clip} yama, {time.perf_counter() - t_clip:.0f} sn", flush=True)
+        info["clips"][cid] = {"yama": n_clip, "atlanan_segment": n_skip, "sn": round(time.perf_counter() - t_clip)}
+        print(f"{cid}: {n_clip} yama, {n_skip} yumusak segment atlandi, {time.perf_counter() - t_clip:.0f} sn", flush=True)
     flush()
     with open(os.path.join(out_dir, f"info_{int(time.time())}.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=1)

@@ -85,10 +85,28 @@ def psnr_y(sr: torch.Tensor, hr: torch.Tensor, border: int = 4) -> torch.Tensor:
     return 10 * torch.log10(1 / mse)
 
 
+def hf_energy(x: torch.Tensor) -> torch.Tensor:
+    """Y kanalinda Nyquist'in yarisindan yukari (4K'da: 1080p'nin tasiyamadigi) enerji, ornek basina."""
+    y = (x.clamp(0, 1) * Y_COEF.to(x.device)).sum(1)
+    y = y - y.mean((1, 2), keepdim=True)
+    p = torch.fft.rfft2(y, norm="ortho").abs() ** 2
+    h, w = y.shape[-2:]
+    fy = torch.fft.fftfreq(h, device=x.device).abs()[:, None] * 2
+    fx = torch.fft.rfftfreq(w, device=x.device)[None, :] * 2
+    mask = (torch.maximum(fy, fx) >= 0.5).float()
+    return (p * mask).sum((1, 2))
+
+
+def fft_loss(sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
+    """F26: frekans uzayinda L1 (karmasik fark). L1 tek basina bozuk girdide ortalamaya (bulaniga) kacar."""
+    return (torch.fft.rfft2(sr, norm="ortho") - torch.fft.rfft2(hr, norm="ortho")).abs().mean()
+
+
 @torch.no_grad()
 def evaluate(net, val: list[tuple[np.ndarray, np.ndarray]], device: str) -> dict:
     net.eval()
     ps, pb = [], []
+    e_sr, e_hr = 0.0, 0.0
     for lr_np, hr_np in val:
         for s in range(0, len(lr_np), 64):
             lr = torch.from_numpy(lr_np[s:s + 64]).to(device).permute(0, 3, 1, 2).float() / 255
@@ -98,8 +116,11 @@ def evaluate(net, val: list[tuple[np.ndarray, np.ndarray]], device: str) -> dict
             bic = F.interpolate(lr, scale_factor=2, mode="bicubic", align_corners=False)
             ps.append(psnr_y(sr, hr))
             pb.append(psnr_y(bic, hr))
+            e_sr += float(hf_energy(sr).sum())
+            e_hr += float(hf_energy(hr).sum())
     net.train()
-    return {"psnr": float(torch.cat(ps).mean()), "bicubic": float(torch.cat(pb).mean())}
+    return {"psnr": float(torch.cat(ps).mean()), "bicubic": float(torch.cat(pb).mean()),
+            "hf": e_sr / max(e_hr, 1e-12)}
 
 
 def save_release(net, path: str) -> None:
@@ -149,6 +170,7 @@ def main() -> None:
     ap.add_argument("--group", type=int, default=6)
     ap.add_argument("--val-shards", type=int, default=4)
     ap.add_argument("--ema", type=float, default=0.0, help="agirlik EMA'si (0: kapali); dogrulama ve kayit EMA ile")
+    ap.add_argument("--fft-weight", type=float, default=0.0, help="F26: frekans kaybi agirligi (0: sadece L1)")
     args = ap.parse_args()
     device = "cuda"
     torch.backends.cudnn.benchmark = True
@@ -201,12 +223,12 @@ def main() -> None:
     logf = open(os.path.join(run_dir, "log.csv"), "a", newline="", encoding="utf-8")
     w = csv.writer(logf)
     if new_log:
-        w.writerow(["iter", "zaman", "kayip", "lr", "val_psnr", "val_bicubic", "sicaklik_c", "guc_w", "it_sn"])
+        w.writerow(["iter", "zaman", "kayip", "lr", "val_psnr", "val_bicubic", "sicaklik_c", "guc_w", "it_sn", "val_hf"])
         base = evaluate(net, val, device)
-        log(f"baslangic dogrulama: hazir RT4KSR {base['psnr']:.3f} dB, bicubic {base['bicubic']:.3f} dB, "
+        log(f"baslangic dogrulama: hazir RT4KSR {base['psnr']:.3f} dB (hf {base['hf']:.3f}), bicubic {base['bicubic']:.3f} dB, "
             f"{sum(len(v[0]) for v in val)} yama, egitim {len(train_files)} parca")
         w.writerow([0, time.strftime("%H:%M:%S"), "", args.lr, round(base["psnr"], 4), round(base["bicubic"], 4),
-                    gpu.last.get("sicaklik_c"), gpu.last.get("guc_w"), ""])
+                    gpu.last.get("sicaklik_c"), gpu.last.get("guc_w"), "", round(base["hf"], 4)])
         best = max(best, base["psnr"])
 
     net.train()
@@ -221,6 +243,8 @@ def main() -> None:
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 sr = net(lr_b)
             loss = F.l1_loss(sr.float(), hr_b)
+            if args.fft_weight > 0:
+                loss = loss + args.fft_weight * fft_loss(sr.float(), hr_b)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -237,14 +261,14 @@ def main() -> None:
                 dt = time.time() - t_win
                 w.writerow([it, time.strftime("%H:%M:%S"), round(loss_sum / n_sum, 5), f"{sched.get_last_lr()[0]:.2e}",
                             round(ev["psnr"], 4), round(ev["bicubic"], 4), gpu.last.get("sicaklik_c"),
-                            gpu.last.get("guc_w"), round(n_sum / dt, 1)])
+                            gpu.last.get("guc_w"), round(n_sum / dt, 1), round(ev["hf"], 4)])
                 logf.flush()
                 mark = ""
                 if ev["psnr"] > best:
                     best = ev["psnr"]
                     save_release(ema if ema is not None else net, best_rel)
                     mark = " (en iyi, kaydedildi)"
-                log(f"iter {it}: kayip {loss_sum / n_sum:.4f}, dogrulama {ev['psnr']:.3f} dB{mark}, "
+                log(f"iter {it}: kayip {loss_sum / n_sum:.4f}, dogrulama {ev['psnr']:.3f} dB (hf {ev['hf']:.3f}){mark}, "
                     f"{n_sum / dt:.1f} it/sn, GPU {gpu.last.get('sicaklik_c')} C")
                 t_win, loss_sum, n_sum = time.time(), 0.0, 0
             if time.time() - t_ck > args.ckpt_min * 60 or it == args.iters:
