@@ -48,7 +48,7 @@ def main() -> None:
             "id": vid, "dosya": os.path.basename(files[0]), "url": info.get("webpage_url"),
             "baslik": info.get("title"), "yukleyen": info.get("channel") or info.get("uploader"),
             "kanal_url": info.get("channel_url"), "yukleme_tarihi": info.get("upload_date"),
-            "lisans": lic, "lisans_kaynagi": "YouTube izleme sayfasi (yt-dlp license alani)",
+            "lisans": lic, "lisans_kaynagi": "YouTube izleme sayfasi (yt-dlp license alani; tarayicida sayfa metni de kontrol edildi)",
             "cozunurluk": [st["width"], st["height"]], "fps": round(num / den, 3), "codec": st["codec_name"],
             "sure_sn": round(float(pr["format"]["duration"]), 1), "boyut_mb": round(int(pr["format"]["size"]) / 1e6),
             "alinma_tarihi": prev.get("alinma_tarihi") or datetime.date.today().isoformat(),

@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
 import time
 
 import numpy as np
@@ -67,7 +66,8 @@ def luma_bgr(y: torch.Tensor) -> torch.Tensor:
 
 
 class YMetric:
-    """GPU'da PSNR + SSIM (Y, 0-255). SSIM: 11x11 Gauss, ayrik evrisim."""
+    """GPU'da PSNR + SSIM (Y, 0-255). SSIM: 11x11 Gauss, ayrik evrisim. Girdi bitisik olmali
+    (kirpilmis gorunumde evrisim 4 kat yavas: 54 -> 13 ms, 4K)."""
 
     def __init__(self, device: str = "cuda") -> None:
         g = _gauss(device=device)
@@ -80,9 +80,10 @@ class YMetric:
         return F.conv2d(F.conv2d(x, self.kx), self.ky)
 
     @torch.no_grad()
-    def __call__(self, a: torch.Tensor, b: torch.Tensor) -> tuple[float, float]:
-        mse = torch.mean((a - b) ** 2).item()
-        psnr = 99.0 if mse <= 1e-10 else 10.0 * float(np.log10(255.0 ** 2 / mse))
+    def tensors(self, a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """(psnr, ssim) 0 boyutlu tensorler (senkronizasyon yok)."""
+        mse = torch.mean((a - b) ** 2).clamp_min(1e-10)
+        psnr = 10.0 * torch.log10(255.0 ** 2 / mse)
         x = a[None, None]
         y = b[None, None]
         mx, my = self._blur(x), self._blur(y)
@@ -90,11 +91,35 @@ class YMetric:
         syy = self._blur(y * y) - my * my
         sxy = self._blur(x * y) - mx * my
         ssim = ((2 * mx * my + self.c1) * (2 * sxy + self.c2)) / ((mx * mx + my * my + self.c1) * (sxx + syy + self.c2))
-        return psnr, float(ssim.mean().item())
+        return psnr, ssim.mean()
+
+    def __call__(self, a: torch.Tensor, b: torch.Tensor) -> tuple[float, float]:
+        p, s = self.tensors(a.contiguous(), b.contiguous())
+        return float(p.item()), float(s.item())
+
+
+CROP = (slice(EXCLUDE_TOP_4K, -BORDER_4K), slice(BORDER_4K, -BORDER_4K))
+
+
+def ssim_psnr_cpu(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """Y (float32, 0-255): PSNR ve SSIM (11x11 Gauss, sigma 1.5, gecerli bolge; Wang vd. 2004)."""
+    import cv2
+    mse = float(np.mean((x - y) ** 2))
+    psnr = 99.0 if mse <= 1e-10 else 10.0 * float(np.log10(255.0 ** 2 / mse))
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+
+    def bl(z):
+        return cv2.GaussianBlur(z, (11, 11), 1.5)[5:-5, 5:-5]
+    mx, my = bl(x), bl(y)
+    sxx = bl(x * x) - mx * mx
+    syy = bl(y * y) - my * my
+    sxy = bl(x * y) - mx * my
+    ssim = ((2 * mx * my + c1) * (2 * sxy + c2)) / ((mx * mx + my * my + c1) * (sxx + syy + c2))
+    return psnr, float(ssim.mean())
 
 
 class GtBank:
-    """GT segmentinin secilen karelerinin Y kanali (VRAM, uint8)."""
+    """GT segmentinin secilen karelerinin Y kanali (RAM, uint8, puan bolgesine kirpilmis)."""
 
     def __init__(self, meta_path: str, shift: int = 0, keep: tuple[int, ...] = (0, 3), period: int = 6,
                  device: str = "cuda") -> None:
@@ -136,7 +161,8 @@ class GtBank:
             if self.wanted(g):
                 t = torch.frombuffer(buf, dtype=torch.uint8).view(h, w, 3).to(self.device, non_blocking=False)
                 y = (t.permute(2, 0, 1).float() * coef).sum(0)
-                self.frames[g] = y.add_(0.5).clamp_(0, 255).to(torch.uint8)
+                # RAM'de (uint8, kirpilmis ve bitisik): puan CPU'da hesaplanir, VRAM hatta kalir
+                self.frames[g] = np.ascontiguousarray(y.add_(0.5).clamp_(0, 255).to(torch.uint8)[CROP].cpu().numpy())
             g += 1
         p.wait()
         self.total = g
@@ -154,22 +180,40 @@ class GtBank:
 
 
 class LiveScorer:
-    """Cikis dongusunden cagrilir. Bosluk varsa hemen puanlar, yoksa tek kareyi bekletir."""
+    """Cikis dongusunden cagrilir. Y ana akista hesaplanip pinned bellege asenkron kopyalanir (~1 ms);
+    PSNR/SSIM arka plan is parcaciginda CPU'da (cv2, 2 is parcacigi) hesaplanir. GPU'da SSIM
+    TensorRT islerini bekletip islem p99'u 70 ms'ye cikariyordu (2026-09-16). Ayni anda tek is."""
 
-    def __init__(self, bank: GtBank, max_per_s: float = 4.0) -> None:
+    def __init__(self, bank: GtBank, max_per_s: float = 2.0) -> None:
+        import threading
+
+        import cv2
+        cv2.setNumThreads(2)
         self.bank = bank
-        self.interval = 1.0 / max_per_s  # 4K SSIM pahali: saniyede birkac kare yeter
+        self.interval = 1.0 / max_per_s
         self._last_t = -1e9
         self._want = "gercek"  # siniflar sirayla puanlanir
-        self.skipped_rate = 0
-        self.metric = YMetric()
         self.rows: list[tuple] = []  # (t, g, sinif, alpha, psnr, ssim)
-        self.dropped_pending = 0
-        self.skipped_nomatch = 0
+        self.skipped_rate = 0
+        self.skipped_busy = 0
+        self.skipped_budget = 0
+        self.not_grid = 0       # icerik konumu GT izgarasina dusmuyor (hizalama)
+        self.not_in_bank = 0    # izgarada ama bankada tutulmayan kare (bellek icin atlanan)
         self.no_barcode = 0
-        self.cost_ms: list[float] = []
-        self._pending: tuple | None = None
-        self._buf: torch.Tensor | None = None
+        self.gap = 0
+        self.copy_ms: list[float] = []
+        self.cpu_ms: list[float] = []
+        h = 2160 - EXCLUDE_TOP_4K - BORDER_4K
+        w = 3840 - 2 * BORDER_4K
+        self._pinned = torch.empty((h, w), dtype=torch.float32).pin_memory()
+        self._gpu = torch.empty((2160, 3840), dtype=torch.float32, device="cuda")
+        self._job: tuple | None = None
+        self._busy = threading.Event()
+        self._wake = threading.Event()
+        self._stop = False
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
 
     @staticmethod
     def content_pos(ia, ib, alpha: float) -> float | None:
@@ -185,63 +229,86 @@ class LiveScorer:
             return None
         return ia + alpha * (ib - ia)
 
+    def _worker(self) -> None:
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            if self._stop:
+                return
+            item, ev = self._job
+            ev.synchronize()  # sadece bu is parcacigini bekletir
+            t0 = time.perf_counter()
+            x = self._pinned.numpy()
+            gt = self.bank.frames[item[1]].astype(np.float32)
+            psnr, ssim = ssim_psnr_cpu(x, gt)
+            with self._lock:
+                self.rows.append(item + (round(psnr, 3), round(ssim, 5)))
+                self.cpu_ms.append((time.perf_counter() - t0) * 1000)
+            self._job = None
+            self._busy.clear()
+
     def offer(self, y: torch.Tensor, ia, ib, alpha: float, t: float, budget_s: float) -> None:
         """y: (1,3,2160,3840) BGR cikis. budget_s: bir sonraki tike kalan sure."""
         pos = self.content_pos(ia, ib, alpha)
         if pos is None:
-            if ia is None:
+            if ia is None or (ib is None and alpha > 1e-3):
                 self.no_barcode += 1
+            else:
+                self.gap += 1
+            return
+        gf = pos * self.bank.ratio
+        if abs(gf - round(gf)) > 0.02:
+            self.not_grid += 1
             return
         g = self.bank.gt_index(pos)
         if g is None:
-            self.skipped_nomatch += 1
+            self.not_in_bank += 1
             return
         real = alpha <= 1e-3 or alpha >= 1 - 1e-3
         cls = "gercek" if real else "ara"
         gap = t - self._last_t
-        if gap < self.interval or (cls != self._want and gap < 2 * self.interval) or self._pending is not None:
+        if gap < self.interval or (cls != self._want and gap < 2 * self.interval):
             self.skipped_rate += 1
             return
-        item = (t, g, cls, round(alpha, 3))
-        est = (np.median(self.cost_ms[-50:]) / 1000 if self.cost_ms else 0.006) + 0.002
+        if self._busy.is_set():
+            self.skipped_busy += 1
+            return
+        if budget_s < 0.004:
+            self.skipped_budget += 1
+            return
         self._last_t = t
         self._want = "ara" if cls == "gercek" else "gercek"
-        if budget_s > est:
-            self._score(luma_bgr(y), item)
-        else:
-            # Y'yi kopyala (ucuz), bir sonraki bos anda puanla.
-            if self._buf is None:
-                self._buf = torch.empty((y.shape[2], y.shape[3]), dtype=torch.float32, device=y.device)
-            self._buf.copy_(luma_bgr(y))
-            self._pending = item
+        t0 = time.perf_counter()
+        yb = y[0]
+        torch.add(torch.add(yb[0].float().mul_(0.0722), yb[1].float(), alpha=0.7152), yb[2].float(), alpha=0.2126,
+                  out=self._gpu)
+        self._pinned.copy_(self._gpu[CROP], non_blocking=True)
+        ev = torch.cuda.Event()
+        ev.record()
+        self._busy.set()
+        self._job = ((round(t, 3), g, cls, round(alpha, 3)), ev)
+        self._wake.set()
+        self.copy_ms.append((time.perf_counter() - t0) * 1000)
 
     def idle(self, budget_s: float, t: float | None = None) -> None:
-        if self._pending is None:
-            return
-        if t is not None and t - self._pending[0] > 1.0:  # hic bos an bulunamadi: birak
-            self._pending = None
-            self.dropped_pending += 1
-            return
-        est = (np.median(self.cost_ms[-50:]) / 1000 if self.cost_ms else 0.006) + 0.002
-        if budget_s > est:
-            item, self._pending = self._pending, None
-            self._score(self._buf, item)
+        pass
 
-    def _score(self, yl: torch.Tensor, item: tuple) -> None:
+    def finish(self) -> None:
         t0 = time.perf_counter()
-        gt = self.bank.frames[item[1]]
-        sl = (slice(EXCLUDE_TOP_4K, -BORDER_4K), slice(BORDER_4K, -BORDER_4K))
-        psnr, ssim = self.metric(yl[sl], gt[sl].float())
-        self.cost_ms.append((time.perf_counter() - t0) * 1000)
-        self.rows.append(item + (round(psnr, 3), round(ssim, 5)))
+        while self._busy.is_set() and time.perf_counter() - t0 < 5:
+            time.sleep(0.01)
+        self._stop = True
+        self._wake.set()
 
     def summary(self) -> dict:
         out = {"gt": self.bank.meta["gt"], "gt_start_s": self.bank.meta["gt_start_s"], "kaydirma": self.bank.shift,
                "gt_yukleme_sn": round(self.bank.load_s, 1), "gt_kare": len(self.bank.frames),
-               "puanlanan": len(self.rows), "oran_atlanan": self.skipped_rate, "bekleyen_birakilan": self.dropped_pending,
-               "eslesmeyen": self.skipped_nomatch, "serit_okunamayan": self.no_barcode,
-               "puan_maliyeti_ms_p50_p95": [round(float(np.percentile(self.cost_ms, q)), 2) for q in (50, 95)]
-               if self.cost_ms else None}
+               "puanlanan": len(self.rows), "oran_atlanan": self.skipped_rate, "mesgul_atlanan": self.skipped_busy,
+               "butce_atlanan": self.skipped_budget, "izgara_disi": self.not_grid, "bankada_yok": self.not_in_bank,
+               "serit_okunamayan": self.no_barcode, "bosluk": self.gap,
+               "y_kopya_ms_p50_p95": [round(float(np.percentile(self.copy_ms, q)), 2) for q in (50, 95)]
+               if self.copy_ms else None,
+               "cpu_puan_ms_p50": round(float(np.median(self.cpu_ms)), 1) if self.cpu_ms else None}
         for cls in ("gercek", "ara"):
             r = [x for x in self.rows if x[2] == cls]
             if r:

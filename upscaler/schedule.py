@@ -30,8 +30,13 @@ def snap_grid(period: float | None, out_fps: float) -> tuple[float, int] | None:
 GAP_PERIODS = 3.0  # iki kare arasi bundan uzunsa ara kare yok (tutma)
 
 
-def select(ring: GpuFrameRing, s: float, out_fps: float, snap: bool = True) -> tuple[Pick | None, float]:
-    """(secim ya da None, hizalanmis s). Secim release() ile birakilmali."""
+def select(ring: GpuFrameRing, s: float, out_fps: float, snap: bool = True,
+           phase: int | None = None) -> tuple[Pick | None, float]:
+    """(secim ya da None, hizalanmis s). Secim release() ile birakilmali.
+
+    phase: ortak izgarada cikis adiminin fazi (adim = izgara_adimi * lcm/out_fps). Canli puanda
+    klip kare numarasi ile saat sirasi arasindaki fark rastgele oldugu icin faz, gosterilen
+    icerik GT izgarasina dusecek sekilde secilir (zaman en fazla yarim cikis adimi kayar)."""
     period = ring.clock.period
     if period is None:
         return None, s
@@ -39,7 +44,12 @@ def select(ring: GpuFrameRing, s: float, out_fps: float, snap: bool = True) -> t
     origin = ring.clock._offset
     if grid:
         step, phases = grid
-        s = origin + round((s - origin) / step) * step
+        if phase is None:
+            s = origin + round((s - origin) / step) * step
+        else:
+            q = round(1.0 / out_fps / step)
+            x = (s - origin) / step
+            s = origin + (phase + q * round((x - phase) / q)) * step
     p = ring.pick(s)
     if p is None:
         return None, s

@@ -54,7 +54,7 @@ def main() -> None:
         ps = {c: 10 * np.log10(255 ** 2 / max(np.mean((s - gts[c]) ** 2), 1e-6)) for c in cands}
         best = max(ps, key=ps.get)
         hits += best == g
-        rows.append((i, g, best, round(ps[g], 2), round(sorted(ps.values())[-2], 2)))
+        rows.append((i, g, best, round(float(ps[g]), 2), round(float(sorted(ps.values())[-2]), 2)))
     lo.close()
     hi.close()
     pr = ffprobe(sim)

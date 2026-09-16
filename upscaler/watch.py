@@ -691,7 +691,13 @@ class Watcher:
                         continue
 
                 t_a = time.perf_counter()
-                p, s = schedule.select(ring, T - cfg.delay, cfg.out_fps, cfg.snap)
+                phase = None
+                if scorer is not None:
+                    c = ring.meta_offset(T - cfg.delay)
+                    if c is not None:
+                        # icerik konumu (sira + c) * gt/sim oraninin tam sayi olacagi faz (50->60: -c mod 5)
+                        phase = (-c) % 5
+                p, s = schedule.select(ring, T - cfg.delay, cfg.out_fps, cfg.snap, phase)
                 if p is None:
                     tot["bekleme_tik"] += 1
                     win["bekleme_tik"] += 1
@@ -860,6 +866,7 @@ class Watcher:
             summary["av"] = probe.summary(expected_delay=cfg.delay)
             log.write_json("av_ham.json", probe.dump())
         if scorer is not None:
+            scorer.finish()
             summary["puan"] = scorer.summary()
             log.write_json("puan_kareler.json", scorer.dump())
         if cfg.dump_timing:

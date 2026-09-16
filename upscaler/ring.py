@@ -242,5 +242,16 @@ class GpuFrameRing:
                 else:
                     self._in_use[slot] = n
 
+    def meta_offset(self, before_t: float | None = None) -> int | None:
+        """(meta - sira), before_t anindan onceki en yeni girdi: canli puanda gosterilen icerigin
+        klip kare numarasi ile saat sirasi farki (klip basa sarinca degisir)."""
+        with self._lock:
+            for e in reversed(self._entries):
+                if before_t is not None and e.stamp.t > before_t:
+                    continue
+                if isinstance(e.meta, int):
+                    return e.meta - e.stamp.index
+        return None
+
     def __len__(self) -> int:
         return len(self._entries)
