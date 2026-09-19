@@ -88,8 +88,12 @@ def main() -> None:
     ap.add_argument("--sharp-range", default="0:0", help="F26: segment basina rastgele unsharp araligi")
     ap.add_argument("--gt-sharp", default="", help="F26: tools/gt_sharpness.py ciktisi; yumusak GT segmentleri atlanir")
     ap.add_argument("--gt-min", type=float, default=0.0, help="F26: 4K spk_50_75 alt siniri")
-    ap.add_argument("--target", default="4k", choices=["4k", "1080"],
-                    help="F27: 1080 = hedef ayni karenin sikistirilmamis 1080p hali (onarim verisi, LR=HR boyutu)")
+    ap.add_argument("--target", default="4k", choices=["4k", "1080", "1080sharp"],
+                    help="F27: 1080 = hedef ayni karenin sikistirilmamis 1080p hali (onarim verisi, LR=HR boyutu); "
+                         "1080sharp = hedef 4K karenin yumusatmasiz (on kucultme/unsharp yok) 1080p hali (AI yeniden cizim)")
+    ap.add_argument("--temporal", action="store_true",
+                    help="AI: yama basina girdi kareleri t-1..t+2 (4) ve hedef t, t+1 (2) saklanir (zamansal kayip)")
+    ap.add_argument("--fixed", default="", help="dogrulama: sabit bozulma 'pre:sharp' (ör. 0.7:0.4)")
     args = ap.parse_args()
     out_dir = os.path.join(ROOT, "data", "pairs", args.name)
     os.makedirs(out_dir, exist_ok=True)
@@ -97,8 +101,8 @@ def main() -> None:
     os.makedirs(sim_dir, exist_ok=True)
     rng = np.random.default_rng(1234)
     P = args.lr
-    Q = P if args.target == "1080" else 2 * P
-    sc = 1 if args.target == "1080" else 2
+    Q = P if args.target.startswith("1080") else 2 * P
+    sc = 1 if args.target.startswith("1080") else 2
     lr_buf, hr_buf, src_buf = [], [], []
     shard_i = len([f for f in os.listdir(out_dir) if f.startswith("shard_")])
     total_bytes = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
@@ -136,6 +140,8 @@ def main() -> None:
                 continue
             pre = float(rng.uniform(pre_lo, pre_hi))
             sharp = float(rng.uniform(sh_lo, sh_hi))
+            if args.fixed:
+                pre, sharp = map(float, args.fixed.split(":"))
             sim = os.path.join(sim_dir, f"{cid}_{int(s)}.mp4")
             subprocess.run([sys.executable, os.path.join(HERE, "tod_sim.py"), gt, "--start", str(s), "--seconds",
                             str(args.seg_seconds), "--no-barcode", "--kbps", str(args.kbps), "--out", sim,
@@ -146,16 +152,21 @@ def main() -> None:
                 # Ayni filtre zinciri, kodlayicisiz: sim kare i <-> temiz kare i (fps secimi ayni)
                 from tod_sim import clean_vf
                 hi = RawReader(gt, 1920, 1080, s, args.seg_seconds, pre_vf=clean_vf(pre, sharp))
+            elif args.target == "1080sharp":
+                # Ayni an, ayni geometri; yumusatma ve kodlayici yok: 4K -> 1080p lanczos (keskin hedef)
+                from tod_sim import clean_vf
+                hi = RawReader(gt, 1920, 1080, s, args.seg_seconds, pre_vf=clean_vf(1.0, 0.0))
             else:
                 hi = RawReader(gt, 3840, 2160, s, args.seg_seconds, pre_vf="setpts=N/(60*TB)")
             g_next = 0
             hr_frame = None
             i = 0
+            hist_lr, hist_hr = [], []  # --temporal: son 4 kare (t-1, t, t+1, t+2)
             while True:
                 lr = lo.read()
                 if lr is None:
                     break
-                g = i if args.target == "1080" else round(1.2 * i)
+                g = i if args.target.startswith("1080") else round(1.2 * i)
                 while g_next <= g:
                     hr_frame = hi.read()
                     g_next += 1
@@ -163,6 +174,25 @@ def main() -> None:
                         break
                 if hr_frame is None:
                     break
+                if args.temporal:
+                    hist_lr = (hist_lr + [lr])[-4:]
+                    hist_hr = (hist_hr + [hr_frame])[-4:]
+                    if len(hist_lr) == 4 and i % args.frame_every == 0:
+                        for _ in range(args.patches):
+                            for _try in range(5):
+                                y = int(rng.integers(0, 1080 - P)) // 2 * 2
+                                x = int(rng.integers(0, 1920 - P)) // 2 * 2
+                                h = np.stack([f[y:y + P, x:x + P] for f in hist_hr[1:3]])
+                                if flat_ok(h[0]):
+                                    lr_buf.append(np.stack([f[y:y + P, x:x + P] for f in hist_lr]))
+                                    hr_buf.append(h)
+                                    src_buf.append(f"{cid}:{s:.0f}:{i - 2}:p{pre:.2f}:u{sharp:.2f}")
+                                    n_clip += 1
+                                    break
+                            if len(lr_buf) >= args.shard:
+                                flush()
+                    i += 1
+                    continue
                 if i % args.frame_every == 0:
                     for _ in range(args.patches):
                         for _try in range(5):

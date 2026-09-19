@@ -492,12 +492,68 @@ class RepairProcessor(PassProcessor):
         return out
 
 
+class AiProcessor(PassProcessor):
+    """TV modu + AI yeniden cizim (goal 2026-09-20, models/ai.py AiNet): 1080p -> 1080p.
+
+    Cok kareli ag (frames=3) t-1, t, t+1 karelerini ister: islemci son 3 yeni kareyi kendi
+    tamponunda tutar ve bir kare geriden gelir (cikis = f[n-1], girdi f[n-2], f[n-1], f[n]).
+    Bu 1 kare (20 ms) ek goruntu gecikmesi demek. Yeni kare, secilen tampon diliminin adresinden
+    anlasilir (ayni dilim = ayni kare tekrar).
+    TensorRT motoru (weights/trt/ai_<ad>_1920x1080_fp16.engine) yoksa PyTorch FP16 (yavas).
+    split=True: sol yari AI, sag yari ham (ayni kare), ortada 4 px beyaz cizgi (S tusu).
+    """
+
+    def __init__(self, ai: str, out_h: int = 1080, out_w: int = 1920, split: bool = False) -> None:
+        super().__init__(out_h, out_w)
+        from .models.ai import AiBgr255, engine_path, load_ai
+        self.split = split
+        self.ai = ai
+        net = load_ai(ai)
+        self.frames = net.frames
+        path = engine_path(ai, out_h, out_w)
+        self.eng = self.net = None
+        if os.path.exists(path):
+            from .models.trt_engine import TrtEngine
+            self.eng = TrtEngine(path)
+        else:
+            print(f"[ai] motor yok ({path}), PyTorch kullaniliyor: tools/build_trt_ai.py --name {ai}")
+            self.net = AiBgr255(net.cuda().eval(), self.frames).half()
+        self._hist = torch.zeros((self.frames, 3, out_h, out_w), dtype=torch.float16, device="cuda")
+        self._n = 0
+        self._last_ptr = None
+        self._out = torch.empty((1, 3, out_h, out_w), dtype=torch.uint8, device="cuda")
+        self.name = f"pass+ai-{ai}" + ("+split" if split else "")
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        src = self.pick(a_bgra, b_bgra, alpha)
+        ptr = src.data_ptr()
+        raw = src[..., :3].permute(2, 0, 1)
+        if ptr != self._last_ptr or self._n == 0:
+            self._last_ptr = ptr
+            if self.frames > 1:
+                self._hist = torch.roll(self._hist, -1, 0)
+            self._hist[-1].copy_(raw)
+            if self._n == 0:  # ilk kare: gecmisi ayni kareyle doldur
+                self._hist[:] = self._hist[-1]
+            self._n += 1
+            x = self._hist.reshape(1, 3 * self.frames, self.out_h, self.out_w)
+            y = self.eng(x=x)["y"] if self.eng is not None else self.net(x)
+            self._out.copy_(y)
+            if self.split:
+                mid = self._hist[self.frames // 2]
+                half = self.out_w // 2
+                self._out[0, :, :, half:].copy_(mid[:, :, half:])
+                self._out[:, :, :, half - 2:half + 2] = 255
+        return self._out
+
+
 PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt",
-              "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr", "pass", "repair"]
+              "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr", "pass", "repair", "ai"]
 
 
 def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "rt4ksr-x2",
-                   split: bool = False, repair: str = "") -> BaselineProcessor:
+                   split: bool = False, repair: str = "", ai: str = "") -> BaselineProcessor:
     if name == "baseline":
         return BaselineProcessor(out_h, out_w)
     if name == "rife":
@@ -522,4 +578,6 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "r
         return PassProcessor(out_h, out_w)
     if name == "repair":
         return RepairProcessor(repair, out_h, out_w, split=split)
+    if name == "ai":
+        return AiProcessor(ai, out_h, out_w, split=split)
     raise ValueError(f"bilinmeyen islemci: {name}")

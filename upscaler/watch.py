@@ -57,6 +57,7 @@ class WatchConfig:
     out_w: int = 3840
     tv: bool = False                    # TV modu: 1080p, kaynak hizi (50), ara kare/SR yok
     repair: str = ""                    # TV modunda onarim agi (weights/repair/<ad>.pth), "" = ham
+    ai: str = ""                        # TV modunda AI yeniden cizim agi (weights/ai/<ad>.pth), "" = yok
     info: bool = False
     log_root: str = os.path.join(ROOT, "runs")
     run_name: str = ""
@@ -571,7 +572,7 @@ class Watcher:
         if sr != self.cfg.sr:
             self.log.event("sr_yedek", istenen=self.cfg.sr, kullanilan=sr)
         proc = make_processor(self.cfg.proc, self.cfg.out_h, self.cfg.out_w, sr=sr, split=self.cfg.split,
-                              repair=self.cfg.repair)
+                              repair=self.cfg.repair, ai=self.cfg.ai)
         canv = getattr(proc, "canvases", None) or [(1080, 1920)]
         for h, w in canv:
             z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")
@@ -904,6 +905,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--tv", action="store_true",
                     help="TV modu: 1080p cikis, 50 FPS, ara kare ve SR yok, harici ekran, vsync kilidi (50 Hz)")
     ap.add_argument("--repair", default="", help="TV modunda sikistirma onarim agi (ör. rep_v0); bos = ham")
+    ap.add_argument("--ai", default="", help="TV modunda AI yeniden cizim agi (weights/ai/<ad>.pth); bos = yok")
     ap.add_argument("--delay", type=float, default=d.delay)
     ap.add_argument("--monitor", default=None, help="auto ya da ekran adinin parcasi")
     ap.add_argument("--vsync", default=d.vsync, choices=["auto", "lock", "timer"])
@@ -925,11 +927,11 @@ def main(argv: list[str] | None = None) -> None:
     if a.tv:
         # TV: kaynak 1080p50, ekran 1080p 50 Hz. Cikis kaynak hizinda, her tik gercek kare.
         mon, fps, oh, ow = a.monitor or "external", a.out_fps or 50.0, 1080, 1920
-        proc = a.proc or ("repair" if a.repair else "pass")
+        proc = a.proc or ("ai" if a.ai else "repair" if a.repair else "pass")
     else:
         mon, fps, proc, oh, ow = a.monitor or d.monitor, a.out_fps or d.out_fps, a.proc or d.proc, d.out_h, d.out_w
     cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=mon, vsync=a.vsync,
-                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
+                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, ai=a.ai, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
                       av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=proc, sr=a.sr, run_name=a.run_name,
                       av_measure=a.av_measure, dump_timing=a.dump_timing, score=a.score,
                       score_shift=a.score_shift)

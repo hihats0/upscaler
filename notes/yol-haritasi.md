@@ -2,7 +2,17 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-19, /goal: bu akşamki maç için TV modu + onarım v0)
+## Şu an neredeyiz (2026-09-19 akşam, /goal: AI yeniden çizim "S24 Ultra gibi")
+
+Goal: canlı TOD TV'de AI kareyi yeniden çizsin (keskin çim, canlı renk, titremesiz), 1080p 50 FPS. Rapor: `reports/2026-09-20-ai-yeniden-cizim.md`.
+- ✅ A tarama (`tools/ai_eval.py`, `runs/ai_eval/tarama1.json`): "küçült + GAN ile yeniden çiz" (540p/270p) PSNR -4..-8 dB, titreme 1,5-1,8: elendi. En iyi algısal: Real-ESRGAN x2 1080p'de + geri küçültme (LPIPS 0,100, spk 0,31) ama 2 sn/kare. Hazır hiçbiri canlıya sığmıyor + iyi değil.
+- ✅ TRT hız (`runs/ai_bench.json`): AiNet 48x8x3 kare 11,9 ms, 48x6x3 9,7 ms, 32x6x3 6,5 ms.
+- ✅ B veri: `data/pairs/ai_train_a/b` (~29 bin örnek, 10 klip), `ai_val` (932, 5bgF + O3gD, sabit 0,7/0,4). Girdi t-1..t+2, hedef t, t+1 (keskin 1080p).
+- ⏳ C eğitim `tools/train_ai.py --name ai_v1` (48x8x3, L1 + LPIPS-VGG + GAN 0,05 + zamansal). Kayıt `runs/train_ai_v1`.
+- Sonra: ai_eval ile tam kare ölçüm, `tools/build_trt_ai.py --name <ad>`, `watch --tv --ai <ad>` (işlemci `AiProcessor` hazır), TOD canlı ölçüm, kısayollar "Maç TV AI" ve "Maç TV AI kıyas".
+- Devam komutu: aynı goal. Önce `runs/train_ai_v1/olaylar.txt`'e bak.
+
+## Önceki durum (2026-09-19, /goal: bu akşamki maç için TV modu + onarım v0)
 
 Hedef: laptop -> HDMI TV (1080p, 50 Hz) 1080p 50 FPS canlı hat + TOD sıkıştırmasını onaran ilk model (F27). Rapor: `reports/2026-09-19-tv-modu-ve-onarim-v0.md`.
 - ✅ A0 commit.
