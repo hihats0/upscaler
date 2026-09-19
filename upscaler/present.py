@@ -283,6 +283,15 @@ class GlPresenter:
         if self.windowed is None:
             self._make_tool_window()
         glfw.show_window(self.win)
+        # Farkli olcekli ekrana tasininca (panel %125 -> TV %100) Windows pencereyi DPI oraninda
+        # kucultuyor (TV'de %80 alan kapladi, 2026-09-19). Boyutu ve konumu yeniden zorla, dogrula.
+        for _ in range(3):
+            if self.windowed is not None or tuple(glfw.get_framebuffer_size(self.win)) == (w, h):
+                break
+            glfw.set_window_size(self.win, w, h)
+            glfw.set_window_pos(self.win, m.x, m.y)
+            glfw.poll_events()
+        self.fb_size = tuple(glfw.get_framebuffer_size(self.win))
         glfw.focus_window(self.win)
         glfw.make_context_current(self.win)
         glfw.set_key_callback(self.win, self._on_key)

@@ -595,7 +595,7 @@ class Watcher:
         presenter.redraw(["upscaler: hazirlaniyor..."])
         presenter.show_info = cfg.info
         log.event("sunucu", gl=presenter.renderer, ekran=asdict(presenter.monitor), mod=presenter.mode,
-                  interval=presenter.interval)
+                  interval=presenter.interval, pencere=getattr(presenter, "fb_size", None))
         # Yakalama ve ses islemci hazirlanirken baslar: tampon dolar, saat kilitlenir, gecikme
         # suresi o arada gecer; ilk kare hazirlik biter bitmez cikar.
         ring = GpuFrameRing(math.ceil((cfg.delay + 1.0) * 60))
