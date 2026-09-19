@@ -2,7 +2,15 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-16 18:20, /goal A -> B -> C bitti; TOD canlı koşusu Yiğit'e bağlı)
+## Şu an neredeyiz (2026-09-19, /goal: bu akşamki maç için TV modu + onarım v0)
+
+Hedef: laptop -> HDMI TV (1080p, 50 Hz) 1080p 50 FPS canlı hat + TOD sıkıştırmasını onaran ilk model (F27). Rapor: `reports/2026-09-19-tv-modu-ve-onarim-v0.md`.
+- ✅ A0 commit.
+- ✅ A TV modu `watch --tv`: test klibi 10 dk 50,001 FPS, geç tik 0, hattın eklediği A/V -2,1 ms; TOD 2 dk 50,0 FPS, geç tik 0, kilit modu (TV 50 Hz). Kısayol `Maç TV ham (upscaler).bat`.
+- ⏳ B onarım v0: veri `data/pairs/rep_train_{a,b,c}`, `rep_val` (hedef = aynı zincirin sıkıştırmasız karesi). Hız taraması `runs/repair_bench.json`. Eğitim `tools/train_repair.py`.
+- ⏳ C: `--tv --repair <ad> --split`, TOD'da `sharpness_probe`.
+
+## Önceki durum (2026-09-16 18:20, /goal A -> B -> C bitti; TOD canlı koşusu Yiğit'e bağlı)
 
 Büyük hedef (Yiğit, 2026-09-16): A) Hat 1.4'ü bitir, B) Hat 1.3 canlı ölçüm + 2.0 mini veri + 2.1 TOD simülatörü, C) Hat 2.2 ilk ince ayar. Sırayla.
 

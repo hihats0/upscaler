@@ -36,7 +36,7 @@ def timed(fn, n=30, warm=8) -> float:
     return (time.perf_counter() - t0) / n * 1000
 
 
-def build(onnx_path: str, engine_path: str) -> None:
+def build(onnx_path: str, engine_path: str, opt_level: int = 5) -> None:
     logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(logger)
     network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED))
@@ -48,7 +48,7 @@ def build(onnx_path: str, engine_path: str) -> None:
             raise SystemExit(1)
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 2 << 30)
-    config.builder_optimization_level = 5
+    config.builder_optimization_level = opt_level
     t0 = time.perf_counter()
     blob = builder.build_serialized_network(network, config)
     if blob is None:

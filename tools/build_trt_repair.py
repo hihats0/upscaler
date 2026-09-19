@@ -35,19 +35,28 @@ def export(net: RepairNet, onnx_path: str, h: int, w: int) -> None:
                           opset_version=17, dynamo=False)
 
 
-def time_engine(eng: TrtEngine, h: int, w: int, n: int = 200) -> dict:
+def time_engine(eng: TrtEngine, h: int, w: int, n: int = 300) -> dict:
+    """Duvar saati (CPU dahil, canli hattaki gibi) ve CUDA olayi (sadece GPU) sureleri, ms.
+    Once ~2 sn isinma: GPU saat hizi dusukken olcum yaniltir."""
     x = torch.rand(1, 3, h, w, device="cuda", dtype=torch.float16) * 255
-    for _ in range(20):
+    t_end = time.perf_counter() + 2.0
+    while time.perf_counter() < t_end:
         eng(x=x)
     torch.cuda.synchronize()
-    ts = []
+    ts, gs = [], []
+    e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     for _ in range(n):
         t0 = time.perf_counter()
+        e0.record()
         eng(x=x)
+        e1.record()
         torch.cuda.synchronize()
         ts.append((time.perf_counter() - t0) * 1000)
+        gs.append(e0.elapsed_time(e1))
     ts.sort()
-    return {"p50": round(ts[n // 2], 2), "p95": round(ts[int(n * 0.95)], 2), "max": round(ts[-1], 2)}
+    gs.sort()
+    return {"p50": round(ts[n // 2], 2), "p95": round(ts[int(n * 0.95)], 2), "max": round(ts[-1], 2),
+            "gpu_p50": round(gs[n // 2], 2), "gpu_p95": round(gs[int(n * 0.95)], 2)}
 
 
 def main() -> None:
@@ -69,7 +78,8 @@ def main() -> None:
             tag = f"rep_c{ch}_b{bl}_{args.w}x{args.h}"
             onnx_path, eng_path = os.path.join(tmp, tag + ".onnx"), os.path.join(tmp, tag + ".engine")
             export(net, onnx_path, args.h, args.w)
-            build(onnx_path, eng_path)
+            if not os.path.exists(eng_path):
+                build(onnx_path, eng_path, opt_level=2)  # tarama: hizli kurulum, sadece boyut karari
             t = time_engine(TrtEngine(eng_path), args.h, args.w)
             params = sum(p.numel() for p in net.parameters())
             row = {"ch": ch, "blocks": bl, "param_k": round(params / 1000, 1), **t}

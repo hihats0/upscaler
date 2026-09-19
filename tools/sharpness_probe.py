@@ -54,6 +54,27 @@ class SrBank:
         return res
 
 
+class RepairBank:
+    """F27: canli kareyi onarim agindan (1080p -> 1080p) gecirir, onarimli karenin olcusunu dondurur.
+    Kare bellekte kalir, sadece sayi. Anahtarlar 'onarim|<olcu>'; ham karenin olculeri onseksiz."""
+
+    def __init__(self, name: str) -> None:
+        import torch
+
+        from upscaler.models.repair import RepairBgr255, load_repair
+        self.torch = torch
+        self.net = RepairBgr255(load_repair(name)).half()
+
+    def __call__(self, bgra: np.ndarray) -> dict[str, float]:
+        torch = self.torch
+        x = torch.from_numpy(bgra[..., :3].copy()).cuda().permute(2, 0, 1)[None].half()
+        with torch.inference_mode():
+            y = self.net(x)
+        img = y[0].permute(1, 2, 0).float().cpu().numpy()
+        m = measure(luma(img, bgr=True))
+        return {f"onarim|{k}": m[k] for k in ("std", "kayip05", "spk_50_75", "spk_75_100")}
+
+
 def probe_window(title: str, seconds: float, rate: float, front: bool,
                  bank: "SrBank | None" = None) -> tuple[list[dict], dict]:
     from windows_capture import WindowsCapture
@@ -165,9 +186,10 @@ def main() -> None:
     ap.add_argument("--no-front", action="store_true")
     ap.add_argument("--name", default="")
     ap.add_argument("--sr", nargs="*", default=[], help="pencere: bu SR modellerinin 4K ciktisini da olc")
+    ap.add_argument("--repair", default="", help="pencere: onarim aginin (weights/repair/<ad>) 1080p ciktisini da olc")
     args = ap.parse_args()
     if args.window:
-        bank = SrBank(args.sr) if args.sr else None
+        bank = RepairBank(args.repair) if args.repair else (SrBank(args.sr) if args.sr else None)
         rows, info = probe_window(args.window, args.seconds, args.rate, not args.no_front, bank)
     elif args.file:
         rows, info = probe_file(args.file, args.every, args.start, args.seconds, args.vf), {"dosya": args.file, "vf": args.vf}
