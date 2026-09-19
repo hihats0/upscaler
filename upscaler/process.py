@@ -600,7 +600,7 @@ class AiAheadProcessor(AiProcessor):
         self._gen: int | None = None
         self._disp: int | None = None
         self._run = 0
-        self.hits = self.misses = 0
+        self.hits = self.misses = self.fits = 0
         if self.async_ahead:
             self.name += "+onisleme"
 
@@ -685,7 +685,7 @@ class AiAheadProcessor(AiProcessor):
         src = p.fa if p.alpha < 0.5 else p.fb
         if tuple(src.shape[:2]) != (self.out_h, self.out_w):
             self._disp = e.stamp.index
-            self.misses += 1
+            self.fits += 1
             return AiProcessor.__call__(self, p.fa, p.fb, p.alpha)  # sigdirma + senkron AI
         idx = e.stamp.index
         if p.gen != self._gen and self._gen is not None:

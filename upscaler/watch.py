@@ -954,7 +954,8 @@ class Watcher:
         if sharp is not None:
             summary["keskinlik"] = sharp.summary()
         if getattr(proc, "async_ahead", False):
-            summary["ai_onisleme"] = {"hazir": proc.hits, "hazir_degil_ham": proc.misses}
+            summary["ai_onisleme"] = {"hazir": proc.hits, "hazir_degil_ham": proc.misses,
+                                     "sigdirma_senkron_ai": proc.fits}
         if scorer is not None:
             scorer.finish()
             summary["puan"] = scorer.summary()
