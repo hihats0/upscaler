@@ -499,49 +499,74 @@ class AiProcessor(PassProcessor):
     tamponunda tutar ve bir kare geriden gelir (cikis = f[n-1], girdi f[n-2], f[n-1], f[n]).
     Bu 1 kare (20 ms) ek goruntu gecikmesi demek. Yeni kare, secilen tampon diliminin adresinden
     anlasilir (ayni dilim = ayni kare tekrar).
-    TensorRT motoru (weights/trt/ai_<ad>_1920x1080_fp16.engine) yoksa PyTorch FP16 (yavas).
-    split=True: sol yari AI, sag yari ham (ayni kare), ortada 4 px beyaz cizgi (S tusu).
+    gain: AI farkinin carpani (agresiflik); blend: durgun bolge harmani (titreme bastirma).
+    3 kareli agda ikisi motorun icinde (weights/trt/ai_<ad>_bNNN[_gNNN]_..., build_trt_ai.py --blend
+    --gain); motor yoksa PyTorch'ta (yavas). split=True: sol yari AI, sag yari ham (S tusu).
     """
 
-    def __init__(self, ai: str, out_h: int = 1080, out_w: int = 1920, split: bool = False) -> None:
+    def __init__(self, ai: str, out_h: int = 1080, out_w: int = 1920, split: bool = False,
+                 blend: float = 0.6, gain: float = 1.0, sat: float = 1.0, con: float = 1.0) -> None:
         super().__init__(out_h, out_w)
-        from .models.ai import AiBgr255, engine_path, load_ai
+        from .models.ai import AiBgr255, StaticBlend, blend_engine_path, engine_path, load_ai
+        from .models.trt_engine import TrtEngine
         self.split = split
         self.ai = ai
         net = load_ai(ai)
         self.frames = net.frames
-        path = engine_path(ai, out_h, out_w)
+        self.gain = gain
         self.eng = self.net = None
-        if os.path.exists(path):
-            from .models.trt_engine import TrtEngine
+        self.eng_blend = False
+        self.blend = None
+        bpath = blend_engine_path(ai, blend, gain, out_h, out_w, sat, con)
+        path = engine_path(ai, out_h, out_w)
+        if self.frames == 3 and os.path.exists(bpath):
+            self.eng, self.eng_blend = TrtEngine(bpath), True
+        elif os.path.exists(path):
             self.eng = TrtEngine(path)
+            print(f"[ai] harman/guc/renk motoru yok ({bpath}), harman ve guc PyTorch'ta, renk YOK")
         else:
             print(f"[ai] motor yok ({path}), PyTorch kullaniliyor: tools/build_trt_ai.py --name {ai}")
             self.net = AiBgr255(net.cuda().eval(), self.frames).half()
+        if blend > 0 and not self.eng_blend:
+            self.blend = StaticBlend(blend, 2.0 / 255, scale=255.0)
         self._hist = torch.zeros((self.frames, 3, out_h, out_w), dtype=torch.float16, device="cuda")
+        self._po = torch.zeros((1, 3, out_h, out_w), dtype=torch.float16, device="cuda")
         self._n = 0
         self._last_ptr = None
         self._out = torch.empty((1, 3, out_h, out_w), dtype=torch.uint8, device="cuda")
-        self.name = f"pass+ai-{ai}" + ("+split" if split else "")
+        self.last_raw: torch.Tensor | None = None  # cikisla ayni anin ham karesi (keskinlik probu)
+        self.name = (f"pass+ai-{ai}" + (f"+guc{gain}" if gain != 1.0 else "") + (f"+renk{sat}/{con}" if (sat, con) != (1.0, 1.0) else "") + (f"+blend{blend}" if blend > 0 else "")
+                     + ("(motor)" if self.eng_blend else "") + ("+split" if split else ""))
 
     @torch.inference_mode()
     def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
         src = self.pick(a_bgra, b_bgra, alpha)
         ptr = src.data_ptr()
-        raw = src[..., :3].permute(2, 0, 1)
         if ptr != self._last_ptr or self._n == 0:
             self._last_ptr = ptr
-            if self.frames > 1:
-                self._hist = torch.roll(self._hist, -1, 0)
-            self._hist[-1].copy_(raw)
-            if self._n == 0:  # ilk kare: gecmisi ayni kareyle doldur
-                self._hist[:] = self._hist[-1]
+            raw = src[..., :3].permute(2, 0, 1)
+            h = self._hist
+            for i in range(self.frames - 1):  # kaydir (yerinde, yeni bellek yok)
+                h[i].copy_(h[i + 1])
+            h[-1].copy_(raw)
+            mid = h[self.frames // 2]
+            if self._n == 0:  # ilk kare: gecmisi ve onceki cikisi ayni kareyle doldur
+                h[:] = h[-1]
+                self._po.copy_(mid[None])
             self._n += 1
-            x = self._hist.reshape(1, 3 * self.frames, self.out_h, self.out_w)
-            y = self.eng(x=x)["y"] if self.eng is not None else self.net(x)
+            x = h.view(1, 3 * self.frames, self.out_h, self.out_w)
+            if self.eng_blend:
+                y = self.eng(x=x, po=self._po)["y"]
+                self._po.copy_(y)
+            else:
+                y = self.eng(x=x)["y"] if self.eng is not None else self.net(x)
+                if self.gain != 1.0:
+                    y = torch.round(torch.clamp(mid[None] + self.gain * (y - mid[None]), 0, 255))
+                if self.blend is not None:
+                    y = torch.round(self.blend(mid[None].float(), y.float()))
             self._out.copy_(y)
+            self.last_raw = mid
             if self.split:
-                mid = self._hist[self.frames // 2]
                 half = self.out_w // 2
                 self._out[0, :, :, half:].copy_(mid[:, :, half:])
                 self._out[:, :, :, half - 2:half + 2] = 255
@@ -553,7 +578,8 @@ PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "r
 
 
 def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "rt4ksr-x2",
-                   split: bool = False, repair: str = "", ai: str = "") -> BaselineProcessor:
+                   split: bool = False, repair: str = "", ai: str = "", ai_blend: float = 0.6, ai_gain: float = 1.0,
+                   ai_sat: float = 1.0, ai_con: float = 1.0) -> BaselineProcessor:
     if name == "baseline":
         return BaselineProcessor(out_h, out_w)
     if name == "rife":
@@ -579,5 +605,6 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "r
     if name == "repair":
         return RepairProcessor(repair, out_h, out_w, split=split)
     if name == "ai":
-        return AiProcessor(ai, out_h, out_w, split=split)
+        return AiProcessor(ai, out_h, out_w, split=split, blend=ai_blend, gain=ai_gain,
+                           sat=ai_sat, con=ai_con)
     raise ValueError(f"bilinmeyen islemci: {name}")

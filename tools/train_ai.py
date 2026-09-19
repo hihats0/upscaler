@@ -39,6 +39,31 @@ from upscaler.models.ai import AiNet, load_ai, save_ai  # noqa: E402
 from upscaler.watch import GpuMonitor  # noqa: E402
 
 
+def watch_running() -> bool:
+    """Yigit mac izliyor mu (python -m upscaler watch)? Izlerken egitim GPU'yu bosaltir."""
+    import psutil
+    for p in psutil.process_iter(["name", "cmdline"]):
+        try:
+            args = p.info["cmdline"] or []
+        except Exception:  # noqa: BLE001
+            continue
+        # watch.bat: python.exe -m upscaler watch ...
+        if any(args[i:i + 3] == ["-m", "upscaler", "watch"] for i in range(len(args) - 2)):
+            return True
+    return False
+
+
+def wait_watch(log) -> float:
+    waited = 0.0
+    if watch_running():
+        log("duraklama: watch acik (Yigit izliyor)")
+        while watch_running():
+            time.sleep(10)
+            waited += 10
+        log(f"devam: watch kapandi ({waited:.0f} sn)")
+    return waited
+
+
 def load_shard(path: str) -> tuple[np.ndarray, np.ndarray]:
     with np.load(path) as z:
         return z["lr"], z["hr"]
@@ -199,11 +224,15 @@ def main() -> None:
         f"param {sum(p.numel() for p in net.parameters()) / 1000:.1f}k")
     best = 9.0
     it = 0
+    t_watch = 0.0
     t_win, gl_sum, dl_sum, n_sum = time.time(), 0.0, 0.0, 0
     try:
         while it < args.iters:
             if it % 50 == 0:
                 t_win += wait_safe(gpu, args.hot, args.cool, log)
+            if time.time() - t_watch > 5.0:  # Yigit watch acarsa en gec 5 sn icinde GPU'yu birak
+                t_win += wait_watch(log)
+                t_watch = time.time()
             lr_b, hr_b = stream.next(device)
             n = lr_b.shape[0]
             x = net_inputs(lr_b, args.frames)

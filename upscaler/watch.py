@@ -20,6 +20,7 @@ import csv
 import json
 import math
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -58,6 +59,11 @@ class WatchConfig:
     tv: bool = False                    # TV modu: 1080p, kaynak hizi (50), ara kare/SR yok
     repair: str = ""                    # TV modunda onarim agi (weights/repair/<ad>.pth), "" = ham
     ai: str = ""                        # TV modunda AI yeniden cizim agi (weights/ai/<ad>.pth), "" = yok
+    ai_gain: float = 1.0                # AI farkinin carpani (agresiflik)
+    ai_sat: float = 1.0                 # AI: renk doygunlugu
+    ai_con: float = 1.0                 # AI: kontrast
+    ai_blend: float = 0.6               # AI: durgun bolge harmani gucu (titreme bastirma), 0 = kapali
+    probe_sharp: float = 0.0            # >0: saniyede bu kadar cikis/ham keskinlik olcumu (sadece sayi)
     info: bool = False
     log_root: str = os.path.join(ROOT, "runs")
     run_name: str = ""
@@ -561,6 +567,55 @@ def _rss_mb() -> float:
     return psutil.Process().memory_info().rss / 2**20
 
 
+class SharpProbe(threading.Thread):
+    """Canli keskinlik olcumu (goal 2026-09-20): cikis karesi ve ayni anin ham karesi, saniyede
+    `rate` kez CPU'ya kopyalanir, ayri is parcaciginda upscaler/sharpness.measure ile olculur.
+    Kareler bellekte kalir ve atilir; diske SADECE sayi yazilir (TOD kurali)."""
+
+    def __init__(self, rate: float) -> None:
+        super().__init__(daemon=True)
+        self.period = 1.0 / rate
+        self.next_t = 0.0
+        self.q: queue.Queue = queue.Queue(maxsize=2)
+        self.rows: list[dict] = []
+        self.dropped = 0
+
+    def offer(self, y: torch.Tensor, raw: torch.Tensor | None, now: float) -> None:
+        if now < self.next_t:
+            return
+        self.next_t = now + self.period
+        a = y[0].permute(1, 2, 0).cpu().numpy()
+        b = raw.permute(1, 2, 0).cpu().numpy() if raw is not None else None
+        try:
+            self.q.put_nowait((a, b))
+        except queue.Full:
+            self.dropped += 1
+
+    def run(self) -> None:
+        from .sharpness import luma, measure
+        while True:
+            item = self.q.get()
+            if item is None:
+                return
+            a, b = item
+            r = {f"cikis|{k}": v for k, v in measure(luma(a, bgr=True)).items()}
+            if b is not None:
+                r.update({f"ham|{k}": v for k, v in measure(luma(b, bgr=True)).items()})
+            self.rows.append(r)
+
+    def summary(self) -> dict:
+        from .sharpness import summarize
+        self.q.put(None)
+        self.join(timeout=5)
+        out = {"olcum": len(self.rows), "atlanan": self.dropped}
+        for side in ("cikis", "ham"):
+            rows = [{k.split("|", 1)[1]: v for k, v in r.items() if k.startswith(side + "|")} for r in self.rows]
+            rows = [r for r in rows if r]
+            if rows:
+                out[side] = summarize(rows)
+        return out
+
+
 class Watcher:
     def __init__(self, cfg: WatchConfig) -> None:
         self.cfg = cfg
@@ -572,7 +627,8 @@ class Watcher:
         if sr != self.cfg.sr:
             self.log.event("sr_yedek", istenen=self.cfg.sr, kullanilan=sr)
         proc = make_processor(self.cfg.proc, self.cfg.out_h, self.cfg.out_w, sr=sr, split=self.cfg.split,
-                              repair=self.cfg.repair, ai=self.cfg.ai)
+                              repair=self.cfg.repair, ai=self.cfg.ai, ai_blend=self.cfg.ai_blend,
+                              ai_gain=self.cfg.ai_gain, ai_sat=self.cfg.ai_sat, ai_con=self.cfg.ai_con)
         canv = getattr(proc, "canvases", None) or [(1080, 1920)]
         for h, w in canv:
             z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")
@@ -601,6 +657,9 @@ class Watcher:
         # suresi o arada gecer; ilk kare hazirlik biter bitmez cikar.
         ring = GpuFrameRing(math.ceil((cfg.delay + 1.0) * 60))
         probe = AvProbe() if cfg.av_measure else None
+        sharp = SharpProbe(cfg.probe_sharp) if cfg.probe_sharp > 0 else None
+        if sharp is not None:
+            sharp.start()
         scorer = None
         if cfg.score:
             from .score import GtBank, LiveScorer
@@ -621,6 +680,7 @@ class Watcher:
                   hazirlik_sn=round(time.time() - t_boot, 2))
 
         out_period = 1.0 / cfg.out_fps
+        last_lock_T, free_logged = None, False
         t0 = time.perf_counter()
         k = 0
         first_frame_logged = False
@@ -676,6 +736,17 @@ class Watcher:
                 # --- tik zamani ---
                 if presenter.mode == "lock":
                     T = presenter.vclock.next_vsync(time.perf_counter())
+                    # Swap bloklamiyorsa (pencere odak disi/ortulu, DWM baska ekranin hizinda) dongu
+                    # serbest kalip 142 FPS basiyordu (2026-09-19 TOD). Tik araligini cikis periyoduna bagla.
+                    if last_lock_T is not None and T - last_lock_T < 0.75 * out_period:
+                        if not free_logged:
+                            log.event("vsync_bloklamiyor", aralik_ms=round((T - last_lock_T) * 1000, 2))
+                            free_logged = True
+                        T = last_lock_T + out_period
+                        wait = T - time.perf_counter() - 0.002
+                        if wait > 0:
+                            time.sleep(wait)
+                    last_lock_T = T
                     if scorer is not None:
                         scorer.idle(T - time.perf_counter() - 0.004, T - t0)
                 else:
@@ -726,6 +797,8 @@ class Watcher:
                     r = presenter.present(y, info_lines)
                     if probe is not None:
                         probe.on_output_frame(y, r["t_end"], T, p.a.stamp.t)
+                    if sharp is not None and first_frame_logged:
+                        sharp.offer(y, getattr(proc, "last_raw", None), r["t_end"])
                     if scorer is not None:
                         scorer.offer(y, p.a.meta, p.b.meta, p.alpha, T - t0,
                                      T + out_period - time.perf_counter())
@@ -876,6 +949,8 @@ class Watcher:
         if probe is not None:
             summary["av"] = probe.summary(expected_delay=cfg.delay)
             log.write_json("av_ham.json", probe.dump())
+        if sharp is not None:
+            summary["keskinlik"] = sharp.summary()
         if scorer is not None:
             scorer.finish()
             summary["puan"] = scorer.summary()
@@ -906,6 +981,11 @@ def main(argv: list[str] | None = None) -> None:
                     help="TV modu: 1080p cikis, 50 FPS, ara kare ve SR yok, harici ekran, vsync kilidi (50 Hz)")
     ap.add_argument("--repair", default="", help="TV modunda sikistirma onarim agi (ör. rep_v0); bos = ham")
     ap.add_argument("--ai", default="", help="TV modunda AI yeniden cizim agi (weights/ai/<ad>.pth); bos = yok")
+    ap.add_argument("--ai-guc", type=float, default=d.ai_gain, help="AI farkinin carpani (1 = egitildigi gibi, 2 = cok agresif)")
+    ap.add_argument("--ai-renk", type=float, default=d.ai_sat, help="AI: renk doygunlugu (1 = dokunma, 1,2 = canli)")
+    ap.add_argument("--ai-kontrast", type=float, default=d.ai_con, help="AI: kontrast (1 = dokunma)")
+    ap.add_argument("--ai-blend", type=float, default=d.ai_blend, help="AI durgun bolge harmani (0 = kapali)")
+    ap.add_argument("--probe-sharp", type=float, default=0.0, help="saniyede N kez cikis ve ham keskinligi (sadece sayi)")
     ap.add_argument("--delay", type=float, default=d.delay)
     ap.add_argument("--monitor", default=None, help="auto ya da ekran adinin parcasi")
     ap.add_argument("--vsync", default=d.vsync, choices=["auto", "lock", "timer"])
@@ -931,7 +1011,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         mon, fps, proc, oh, ow = a.monitor or d.monitor, a.out_fps or d.out_fps, a.proc or d.proc, d.out_h, d.out_w
     cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=mon, vsync=a.vsync,
-                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, ai=a.ai, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
+                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, ai=a.ai, ai_blend=a.ai_blend, ai_gain=a.ai_guc, ai_sat=a.ai_renk, ai_con=a.ai_kontrast, probe_sharp=a.probe_sharp, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
                       av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=proc, sr=a.sr, run_name=a.run_name,
                       av_measure=a.av_measure, dump_timing=a.dump_timing, score=a.score,
                       score_shift=a.score_shift)

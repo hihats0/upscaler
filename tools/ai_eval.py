@@ -51,6 +51,11 @@ class Runner:
     def __init__(self, name: str) -> None:
         self.name = name
         self.frames = 1
+        self.blend = None
+        if "+blend" in name:  # ör. ai_v2+blend0.6: cikarimda durgun bolge harmani (StaticBlend)
+            name, k = name.split("+blend")
+            from upscaler.models.ai import StaticBlend
+            self.blend = StaticBlend(float(k or 0.6))
         if name == "ham":
             self.net = None
             return
@@ -74,6 +79,8 @@ class Runner:
         if not self.fp32:
             x = x.half()
         y = self.net(x).float().clamp(0, 1)
+        if self.blend is not None:
+            y = self.blend(x[:, k * 3:k * 3 + 3].float(), y)
         return (y[0].permute(1, 2, 0) * 255).round().byte().cpu().numpy()
 
 
@@ -106,7 +113,12 @@ def main() -> None:
             win_hi = (win_hi + [b])[-(2 * R + 1):]
             i += 1
             t = i - 1 - R  # pencerenin orta karesinin numarasi
-            if len(win_lo) < 2 * R + 1 or t % args.every not in (0, 1):
+            if len(win_lo) < 2 * R + 1:
+                continue
+            if t % args.every not in (0, 1):
+                for r in runners:  # harmanli aday onceki cikisa bagli: her kareyi islemeli
+                    if r.blend is not None:
+                        r(win_lo)
                 continue
             tgt = win_hi[R]
             ty = crop(luma(tgt, bgr=False))

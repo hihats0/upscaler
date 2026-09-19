@@ -67,6 +67,10 @@ def main() -> None:
     ap.add_argument("--name", default="", help="weights/ai/<ad>.pth")
     ap.add_argument("--h", type=int, default=1080)
     ap.add_argument("--w", type=int, default=1920)
+    ap.add_argument("--blend", type=float, default=-1.0, help=">=0: guc + durgun bolge harmani motorun icinde (3 kareli ag)")
+    ap.add_argument("--gain", type=float, default=1.0, help="AI farkinin carpani (agresiflik)")
+    ap.add_argument("--sat", type=float, default=1.0, help="renk doygunlugu")
+    ap.add_argument("--con", type=float, default=1.0, help="kontrast")
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
     if args.bench:
@@ -102,6 +106,40 @@ def main() -> None:
             torch.cuda.empty_cache()
         return
     net = load_ai(args.name).cuda().eval()
+    if args.blend >= 0:
+        import time
+
+        from upscaler.models.ai import AiBlendBgr255, blend_engine_path
+        wrap = AiBlendBgr255(net, args.blend, args.gain, sat=args.sat, con=args.con).half().cuda().eval()
+        eng_path = blend_engine_path(args.name, args.blend, args.gain, args.h, args.w, args.sat, args.con)
+        onnx_path = eng_path.replace(".engine", ".onnx")
+        x = torch.rand(1, 9, args.h, args.w, device="cuda", dtype=torch.float16) * 255
+        po = torch.rand(1, 3, args.h, args.w, device="cuda", dtype=torch.float16) * 255
+        with torch.inference_mode():
+            torch.onnx.export(wrap, (x, po), onnx_path, input_names=["x", "po"], output_names=["y"],
+                              opset_version=17, dynamo=False)
+        build(onnx_path, eng_path)
+        os.remove(onnx_path)
+        eng = TrtEngine(eng_path)
+        with torch.inference_mode():
+            ref = wrap(x, po).float()
+            out = eng(x=x, po=po)["y"].float()
+        t_end = time.perf_counter() + 2.0
+        while time.perf_counter() < t_end:
+            eng(x=x, po=po)
+        torch.cuda.synchronize()
+        gs = []
+        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        for _ in range(300):
+            e0.record()
+            eng(x=x, po=po)
+            e1.record()
+            torch.cuda.synchronize()
+            gs.append(e0.elapsed_time(e1))
+        gs.sort()
+        print(json.dumps({"motor": eng_path, "ort_fark_255": round((out - ref).abs().mean().item(), 4),
+                          "gpu_p50": round(gs[150], 2), "gpu_p95": round(gs[285], 2)}))
+        return
     eng_path = engine_path(args.name, args.h, args.w)
     onnx_path = eng_path.replace(".engine", ".onnx")
     wrap = export(net, net.frames, onnx_path, args.h, args.w)

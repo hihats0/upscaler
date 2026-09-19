@@ -148,6 +148,47 @@ class AiBgr255(nn.Module):
         return torch.round(torch.clamp(y, 0.0, 255.0))
 
 
+class AiBlendBgr255(nn.Module):
+    """AiBgr255 + guc + durgun bolge harmani motorun icinde (3 kareli ag): girdi x = [t-1, t, t+1]
+    BGR 0..255, po = bir onceki (harmanli) cikis.
+    guc: AI'nin ham kareye ekledigi farki carpar (1 = egitildigi gibi, 1,5-2 = daha agresif detay).
+    Harman: t ile t-1 arasi fark kucukse (durgun piksel) cikis onceki cikisla karisir (StaticBlend)."""
+
+    def __init__(self, net: nn.Module, strength: float = 0.6, gain: float = 1.0, thr: float = 2.0,
+                 sat: float = 1.0, con: float = 1.0) -> None:
+        super().__init__()
+        self.core = AiBgr255(net, 3)
+        self.k, self.gain, self.thr, self.sat, self.con = strength, gain, thr, sat, con
+
+    def forward(self, x: torch.Tensor, po: torch.Tensor) -> torch.Tensor:
+        n, _, h, w = x.shape
+        rgb = x.view(n, 3, 3, h, w).flip(2).reshape(n, 9, h, w) * (1.0 / 255.0)
+        y = self.core.net(rgb).flip(1) * 255.0
+        mid = x[:, 3:6]
+        if self.gain != 1.0:
+            y = mid + self.gain * (y - mid)
+        if self.sat != 1.0 or self.con != 1.0:
+            # renk: BT.709 lumaya gore doygunluk, orta griye gore kontrast (canli spor gorunumu).
+            # Harmandan ONCE: po zaten renkli son cikis, sonra uygulansa durgun bolgede renk ust uste binerdi.
+            luma = 0.0722 * y[:, 0:1] + 0.7152 * y[:, 1:2] + 0.2126 * y[:, 2:3]
+            y = luma + self.sat * (y - luma)
+            y = 128.0 + self.con * (y - 128.0)
+        if self.k > 0:
+            d = (mid - x[:, 0:3]).abs().mean(1, keepdim=True)
+            d = F.avg_pool2d(d, 5, 1, 2)
+            wgt = self.k * torch.clamp(1.0 - d / self.thr, 0.0, 1.0)
+            y = y + wgt * (torch.clamp(po, 0.0, 255.0) - y)
+        return torch.round(torch.clamp(y, 0.0, 255.0))
+
+
+def blend_engine_path(name: str, strength: float, gain: float = 1.0, h: int = 1080, w: int = 1920,
+                      sat: float = 1.0, con: float = 1.0) -> str:
+    g = "" if gain == 1.0 else f"_g{int(round(gain * 100)):03d}"
+    if sat != 1.0 or con != 1.0:
+        g += f"_s{int(round(sat * 100)):03d}c{int(round(con * 100)):03d}"
+    return os.path.join(ROOT, "weights", "trt", f"ai_{name}_b{int(round(strength * 100)):03d}{g}_{w}x{h}_fp16.engine")
+
+
 def weight_path(name: str) -> str:
     return os.path.join(AI_W, f"{name}.pth")
 
@@ -169,3 +210,26 @@ def save_ai(net: AiNet, name: str, extra: dict | None = None) -> str:
 
 def engine_path(name: str, h: int = 1080, w: int = 1920) -> str:
     return os.path.join(ROOT, "weights", "trt", f"ai_{name}_{w}x{h}_fp16.engine")
+
+
+class StaticBlend:
+    """Cikarimda titreme bastirma (istege bagli): girdinin durgun oldugu piksellerde cikis, bir onceki
+    cikisla harmanlanir. Durgunluk = girdi lumasinin ardisik kare farki (5x5 ortalama) < esik.
+    GAN'in her karede biraz farkli uydurdugu doku sabit bolgede (cim, tribun) titremez; hareketli
+    bolgeye dokunulmaz (hayalet olmasin). Tensorler RGB ya da BGR 0..1 ya da 0..255, [1,3,H,W]."""
+
+    def __init__(self, strength: float = 0.6, thr: float = 2.0 / 255, scale: float = 1.0) -> None:
+        self.k, self.thr, self.scale = strength, thr * scale, scale
+        self.prev_in = self.prev_out = None
+
+    def __call__(self, x_mid: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        if self.prev_in is None or self.prev_in.shape != x_mid.shape:
+            self.prev_in, self.prev_out = x_mid.clone(), out.clone()
+            return out
+        d = (x_mid - self.prev_in).abs().mean(1, keepdim=True)
+        d = F.avg_pool2d(d, 5, 1, 2)
+        w = self.k * torch.clamp(1.0 - d / self.thr, 0.0, 1.0)
+        res = out + w * (self.prev_out - out)
+        self.prev_in.copy_(x_mid)
+        self.prev_out.copy_(res)
+        return res
