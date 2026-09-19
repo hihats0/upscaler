@@ -68,8 +68,12 @@ class RepairBank:
     def __call__(self, bgra: np.ndarray) -> dict[str, float]:
         torch = self.torch
         x = torch.from_numpy(bgra[..., :3].copy()).cuda().permute(2, 0, 1)[None].half()
+        h, w = x.shape[2:]
+        ph, pw = h % 2, w % 2  # TOD penceresi bazen 1079 satir; ag cift boyut ister
+        if ph or pw:
+            x = torch.nn.functional.pad(x.float(), (0, pw, 0, ph), mode="replicate").half()
         with torch.inference_mode():
-            y = self.net(x)
+            y = self.net(x)[:, :, :h, :w]
         img = y[0].permute(1, 2, 0).float().cpu().numpy()
         m = measure(luma(img, bgr=True))
         return {f"onarim|{k}": m[k] for k in ("std", "kayip05", "spk_50_75", "spk_75_100")}

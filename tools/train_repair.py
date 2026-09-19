@@ -78,7 +78,7 @@ def main() -> None:
     ap.add_argument("--blocks", type=int, default=4)
     ap.add_argument("--iters", type=int, default=30000)
     ap.add_argument("--batch", type=int, default=16)
-    ap.add_argument("--lr", type=float, default=4e-4)
+    ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--amp-weight", type=float, default=1.0, help="genlik spektrumu kaybi agirligi")
     ap.add_argument("--eval-every", type=int, default=1000)
     ap.add_argument("--ema", type=float, default=0.999)
@@ -136,6 +136,7 @@ def main() -> None:
                 loss = loss + args.amp_weight * fft_amp_loss(out, hr_b)
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 0.5)
             opt.step()
             sched.step()
             with torch.no_grad():

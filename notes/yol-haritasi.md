@@ -7,8 +7,9 @@
 Hedef: laptop -> HDMI TV (1080p, 50 Hz) 1080p 50 FPS canlı hat + TOD sıkıştırmasını onaran ilk model (F27). Rapor: `reports/2026-09-19-tv-modu-ve-onarim-v0.md`.
 - ✅ A0 commit.
 - ✅ A TV modu `watch --tv`: test klibi 10 dk 50,001 FPS, geç tik 0, hattın eklediği A/V -2,1 ms; TOD 2 dk 50,0 FPS, geç tik 0, kilit modu (TV 50 Hz). Kısayol `Maç TV ham (upscaler).bat`.
-- ⏳ B onarım v0: veri `data/pairs/rep_train_{a,b,c}`, `rep_val` (hedef = aynı zincirin sıkıştırmasız karesi). Hız taraması `runs/repair_bench.json`. Eğitim `tools/train_repair.py`.
-- ⏳ C: `--tv --repair <ad> --split`, TOD'da `sharpness_probe`.
+- ✅ B onarım v0 (32x6, 5,9 ms): rep_v0 +0,31 dB ama hf düşüyor (detay siliyor); rep_v0b (genlik 8) +0,20 dB, hf 0,857 > 0,828.
+- ✅ C: TOD canlı 5 dk onarımlı 50,0 FPS, geç tik 0, VRAM sabit. TOD keskinliği: onarımlı hamdan yumuşak (v0 -%21, v0b -%10). Kısayollar v0b.
+- **Sıradaki:** model keskinleştirmiyor. Çok kareli onarım (F15/F27) ya da ince bandı koruyan kayıp / GAN son kat (F26). 4K (F27 adım 2) sonra.
 
 ## Önceki durum (2026-09-16 18:20, /goal A -> B -> C bitti; TOD canlı koşusu Yiğit'e bağlı)
 

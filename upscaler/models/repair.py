@@ -31,7 +31,7 @@ class ResBlock(nn.Module):
         self.c2 = nn.Conv2d(ch, ch, 3, 1, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.c2(F.relu(self.c1(x), inplace=True))
+        return x + self.c2(F.leaky_relu(self.c1(x), 0.1, inplace=True))
 
 
 class RepairNet(nn.Module):
@@ -48,7 +48,7 @@ class RepairNet(nn.Module):
         """RGB 0..1 [N,3,H,W] (H, W cift) -> RGB [N,3,H,W] (kirpilmamis)."""
         f = self.head(F.pixel_unshuffle(x, 2))
         f = f + self.body(f)
-        return x + F.pixel_shuffle(self.tail(F.relu(f)), 2)
+        return x + F.pixel_shuffle(self.tail(f), 2)  # kuyrukta ReLU yok: ilk denemede tum ozellikler negatife kayip ag oldu
 
 
 class RepairBgr255(nn.Module):

@@ -181,3 +181,6 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - val2 tek bölümdü ve rastgele p0,99 düştü: TOD'u temsil etmedi, ft3/ft4 kararları ona göre verilmemeli. Doğrulamada bozulma sabit ve TOD benzeri olmalı.
 - GAN (kendi PatchDisc, spektral norm) eğitimi ~5 it/sn, GPU 83 °C.
 - 2026-09-16: Bugün GPU ~5,1 saat yüklü (12:25-21:22 arası, runs/ kayıtlarından). GAN eğitimi 95 W, 86-87 °C ve sürücü ısı kısıtlaması (sw_thermal_slowdown) açıldı. Yiğit GPU sağlığını sordu: train_sr duraklama eşiği 88/78'den **80/70 °C**'ye indirildi.
+- 2026-09-19: Laptop HDMI TV'si glfw'de 1920x1080 50 Hz birincil olmayan ekran, adı panelle aynı ("Generic PnP Monitor"). Ses çıkışı "AAA (NVIDIA High Definition Audio)". TV modunda vsync kilidi interval 1 çalışıyor (ölçüldü).
+- 2026-09-19: 4,8 Mbps H.264 sıkıştırması CC klip doğrulamasında 35,9 dB PSNR-Y, hf 0,83 (ince detayın ~%17'si gidiyor). Tek kareli L1 onarımı +0,2-0,3 dB verir ama canlı TOD'da görüntüyü yumuşatır (spk_50_75 -%10..21). Ölçüldü.
+- 2026-09-19: TOD penceresi WGC'de bazen 1920x1079 geliyor (%10 kare). Çift boyut isteyen ağlarda doldur-kırp gerekir. Ölçüldü.

@@ -55,3 +55,5 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 - 2026-09-15: Plan v4 + bulut kuralları (kanıt kapısı, koşu ≤ $10, toplam ≤ $30) onayı? Yiğit: **"He iyi tm."** Onaylandı. Oturum kapandı, yarın Faz 0.
 - ⏳ 2026-09-16: Algısal kayıp (VGG/LPIPS) için hazır ağırlık indirilsin mi (~500 MB, pytorch.org)? GAN tek başına yetmezse sorulacak.
 - ⏳ 2026-09-16: F26 modellerini gerçek TOD'da ölçmek için TOD'da bir tekrar ya da özet tam ekran açık olmalı (`sharpness_probe --window ... --sr rt4ksr-x2-ft2 rt4ksr-x2-<yeni>`).
+
+**2026-09-19 15:25 (goal, TOD tıkanması):** TOD oynatıcısı önce duraklatılmıştı (agent Play'e bastı). Sonra oynatıcı "oynuyor" gösterdiği halde görüntü akmadı (300 sn'de 412 kare, 52 donma; ham modda da aynı). Onarımlı modun TOD'da 5 dk testi ve keskinlik ölçümü bunun için bekliyor. Yiğit: TOD'da oynayan bir yayın/tekrar aç, tam ekran bırak.
