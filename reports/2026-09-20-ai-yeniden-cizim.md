@@ -1,7 +1,7 @@
 # AI yeniden çizim ("S24 Ultra gibi")
 
 - **Tarih:** 2026-09-19 akşam (goal adı 2026-09-20)
-- **Durum:** onaylı (ölçüldü); canlı TOD keskinlik ölçümü açık
+- **Durum:** onaylı (ölçüldü); 5/5 çıkış kriteri geçti
 - **Kapsam:** Canlı TOD 1080p karesini AI ile keskin (çim dokusu), titremesiz yeniden çizmek, TV modunda 1080p 50 FPS. A: hazır model taraması, B: keskin hedefli veri, C: ince ayar, D: TV moduna takma. Önceki: [TV modu ve onarım v0](2026-09-19-tv-modu-ve-onarim-v0.md), [F26](2026-09-16-f26-tod-yumusaklik.md).
 
 ## A. Hazır model taraması
@@ -147,7 +147,7 @@ TV çıkış penceresi tam ekran yolunda olduğu için WGC ile dışarıdan öl�
 
 | # | Kriter | Sonuç |
 |---|---|---|
-| 1 | Canlı TOD'da spk_50_75 ≥ 0,20 ve hamdan yüksek | **Ölçülmedi.** Maçta prob kapalıydı (vsync kaçırıyordu), maçtan sonra TOD akmıyordu. Simüle klipte ham 0,161, AI 0,39-0,43. Yayın açılınca 2 dk ölçülecek. |
+| 1 | Canlı TOD'da spk_50_75 ≥ 0,20 ve hamdan yüksek | ✅ **AI 0,299, ham 0,135** (2 dk, 231 ölçüm, `runs/tod_keskinlik_v4`, güç 1,3 harman 0,85, 49,99 FPS). Maç sonrası TOD yayını (maç sırasında prob kapalıydı); içerik maçtan farklı olabilir. |
 | 2 | Titreme ≤ 1,15 | ✅ 1,037 (güç 1,3) / 1,024 (güç 1,45); doğrulama, 147 kare |
 | 3 | Doğrulamada spk keskin hedefe ±%15 | ✅ 0,390 (+%3) / 0,427 (+%13), hedef 0,379 |
 | 4 | TOD 10 dk ≥ 49,9 FPS, geç tik ≤ %0,1, VRAM sabit | ✅ maçta 10 dk pencereleri 50,0 FPS, geç tik 0, VRAM 2118 sabit (güç 1,6 motoru; 1,3/1,45 motorları aynı maliyet, 9,0 ms) |
@@ -158,7 +158,7 @@ TV çıkış penceresi tam ekran yolunda olduğu için WGC ile dışarıdan öl�
 ## Açık sorular
 
 - RealBasicVSR ve difüzyon modelleri ölçülmedi (sebepler yukarıda).
-- Kriter 1 (canlı TOD keskinliği) açık: TOD açıkken `watch --tv --ai ai_v4 --ai-guc 1.3 --ai-blend 0.85 --probe-sharp 2 --seconds 120` (prob vsync kaçırabilir, sadece ölçüm için).
+- Canlı keskinlik maç sırasında (çim ağırlıklı içerik) tekrar ölçülmeli: `--probe-sharp 2` ön işlemeli yolda 120 sn'de 49,99 FPS verdi.
 - Takılmada bizim payımız: `--dump-timing` ile TV tikinde tekrar/atlama sayısı. Kaynak aksaması için F28 (RIFE ile doldurma).
 - Daha büyük model: ön işleme sayesinde AI artık 20 ms tik sınırına bağlı değil; ortalama 20 ms'nin altında kaldıkça 64 kanal ya da daha derin ağ sığar (ısı sınırı).
 - Eğitim ısısı: klimasız 85 °C'ye çıkıyor (84/74 sınırı).

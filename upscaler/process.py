@@ -705,6 +705,7 @@ class AiAheadProcessor(AiProcessor):
                 return self._out
             return raw
         self.hits += 1
+        self.last_raw = raw[0]  # keskinlik probu: ayni anin ham karesi
         buf, ev = hit
         torch.cuda.current_stream().wait_event(ev)
         if not self.split:

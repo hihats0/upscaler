@@ -7,7 +7,7 @@
 - ✅ ai_v4 (48x8x3) + güç + harman + renk motorda (9,0 ms), **ön işleme** (`AiAheadProcessor`). Kısayollar: "Maç TV AI" (güç 1,3, harman 0,85), "Maç TV AI kıyas", "Maç TV AI agresif" (1,45 / 0,9). Doğrulama: spk 0,390 / 0,427 (hedef 0,379), titreme 1,04 / 1,02, LPIPS 0,070 (ham 0,111).
 - ✅ 87 dk canlı TOD maçı: 50,0 FPS, geç tik 0, AI hazır %99,06, VRAM sabit.
 - ✅ TV takılmasının bizim tarafı düzeltildi (TV penceresi tam boy; 16:24'ten beri 144 Hz'de sunuyordu).
-- ⏳ **Kriter 1 açık:** TOD açıkken 2 dk canlı keskinlik (`--probe-sharp 2`). Yiğit'e 3 anlama sorusu sorulacak.
+- ✅ Kriter 1: canlı TOD 2 dk spk AI 0,299 / ham 0,135 (maç sonrası yayın). ⏳ Yiğit 3 anlama sorusunu cevaplayacak (sorular: 540p yeniden çizim neden kötü, ön işleme takılmayı neden bitirdi, güç neden 1,6 -> 1,45).
 - Sonra: `--dump-timing` ile bizim takılma payımız, F28 (TOD aksamasını RIFE ile doldur), daha büyük model (ön işleme sayesinde sığar).
 - Rapor: `reports/2026-09-20-ai-yeniden-cizim.md`.
 
