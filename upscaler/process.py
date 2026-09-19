@@ -419,12 +419,85 @@ class FusedSrProcessor(BaselineProcessor):
         return y
 
 
+class PassProcessor(BaselineProcessor):
+    """TV modu (1080p ekran, cikis = kaynak hizi): ara kare yok, SR yok, kare oldugu gibi.
+
+    Cikis hizi kaynak hiziyla ayni oldugunda schedule her tikte gercek kareye oturur (alpha 0/1);
+    oturmazsa (saat kaymasi) en yakin kare secilir, harman yapilmaz. Kaynak cikis boyutunda
+    degilse en-boy korunarak sigdirilir. Donen tensor tamponun gorunumudur (kopya yok); sunucu
+    onu kendi dokusuna kopyalar, secim ondan sonra birakilir.
+    """
+
+    name = "pass"
+
+    def __init__(self, out_h: int = 1080, out_w: int = 1920) -> None:
+        super().__init__(out_h, out_w)
+        self.split = False
+        self._fit_buf: torch.Tensor | None = None
+        self.route = "henuz kare yok"
+
+    def pick(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        """Secilen kare, (out_h, out_w, 4) uint8 BGRA."""
+        src = a_bgra if alpha < 0.5 else b_bgra
+        h, w = src.shape[:2]
+        if (h, w) == (self.out_h, self.out_w):
+            self.route = f"dogrudan {w}x{h}"
+            return src
+        if self._fit_buf is not None and self._fit_buf.shape[:2] != (self.out_h, self.out_w):
+            self._fit_buf = None
+        self._fit_buf = fit_bgra(src, self.out_h, self.out_w, self._fit_buf)
+        self.route = f"sigdirma {w}x{h}->{self.out_w}x{self.out_h}"
+        return self._fit_buf
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        return self.pick(a_bgra, b_bgra, alpha)[..., :3].permute(2, 0, 1).unsqueeze(0)
+
+
+class RepairProcessor(PassProcessor):
+    """TV modu + sikistirma onarimi (F27, models/repair.py): secilen kare 1080p onarim agindan gecer.
+
+    TensorRT motoru (weights/trt/repair_<ad>_1920x1080_fp16.engine) yoksa PyTorch FP16 (yavas).
+    split=True: sol yari onarimli, sag yari ham kare, ortada 4 px beyaz cizgi (S tusu).
+    """
+
+    def __init__(self, repair: str, out_h: int = 1080, out_w: int = 1920, split: bool = False) -> None:
+        super().__init__(out_h, out_w)
+        from .models.repair import RepairBgr255, engine_path, load_repair
+        self.split = split
+        self.repair = repair
+        path = engine_path(repair, out_h, out_w)
+        self.eng = self.net = None
+        if os.path.exists(path):
+            from .models.trt_engine import TrtEngine
+            self.eng = TrtEngine(path)
+        else:
+            print(f"[repair] motor yok ({path}), PyTorch kullaniliyor: tools/build_trt_repair.py --name {repair}")
+            self.net = RepairBgr255(load_repair(repair)).half()
+        self._out = torch.empty((1, 3, out_h, out_w), dtype=torch.uint8, device="cuda")
+        self.name = f"pass+repair-{repair}" + ("+split" if split else "")
+
+    @torch.inference_mode()
+    def __call__(self, a_bgra: torch.Tensor, b_bgra: torch.Tensor, alpha: float) -> torch.Tensor:
+        src = self.pick(a_bgra, b_bgra, alpha)
+        raw = src[..., :3].permute(2, 0, 1).unsqueeze(0)
+        x = raw.half()
+        y = self.eng(x=x)["y"] if self.eng is not None else self.net(x)
+        out = self._out
+        out.copy_(y)  # motor ciktisi zaten yuvarlanmis ve 0..255
+        if self.split:
+            half = self.out_w // 2
+            out[:, :, :, half:].copy_(raw[:, :, :, half:])
+            out[:, :, :, half - 2:half + 2] = 255
+        return out
+
+
 PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt",
-              "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr"]
+              "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr", "pass", "repair"]
 
 
 def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "rt4ksr-x2",
-                   split: bool = False) -> BaselineProcessor:
+                   split: bool = False, repair: str = "") -> BaselineProcessor:
     if name == "baseline":
         return BaselineProcessor(out_h, out_w)
     if name == "rife":
@@ -445,4 +518,8 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "r
         return SrProcessor(sr, "rife-flow", split, out_h, out_w, trt=True)
     if name == "fused-sr":
         return FusedSrProcessor(sr, out_h, out_w, split=split)
+    if name == "pass":
+        return PassProcessor(out_h, out_w)
+    if name == "repair":
+        return RepairProcessor(repair, out_h, out_w, split=split)
     raise ValueError(f"bilinmeyen islemci: {name}")

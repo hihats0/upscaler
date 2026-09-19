@@ -53,6 +53,10 @@ class WatchConfig:
     split: bool = False
     sr: str = "rt4ksr-x2-ft2"           # ince ayarli (yoksa hazir rt4ksr-x2)
     proc: str = "fused-sr"
+    out_h: int = 2160                   # cikis (sunucu dokusu) boyutu
+    out_w: int = 3840
+    tv: bool = False                    # TV modu: 1080p, kaynak hizi (50), ara kare/SR yok
+    repair: str = ""                    # TV modunda onarim agi (weights/repair/<ad>.pth), "" = ham
     info: bool = False
     log_root: str = os.path.join(ROOT, "runs")
     run_name: str = ""
@@ -566,7 +570,8 @@ class Watcher:
         sr = resolve_sr(self.cfg.sr)
         if sr != self.cfg.sr:
             self.log.event("sr_yedek", istenen=self.cfg.sr, kullanilan=sr)
-        proc = make_processor(self.cfg.proc, sr=sr, split=self.cfg.split)
+        proc = make_processor(self.cfg.proc, self.cfg.out_h, self.cfg.out_w, sr=sr, split=self.cfg.split,
+                              repair=self.cfg.repair)
         canv = getattr(proc, "canvases", None) or [(1080, 1920)]
         for h, w in canv:
             z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")
@@ -583,7 +588,8 @@ class Watcher:
         winutil.fine_timer()
         log.event("baslangic", ayarlar=asdict(cfg))
         from .present import GlPresenter, pacing_summary
-        presenter = GlPresenter(monitor=cfg.monitor, out_fps=cfg.out_fps, vsync=cfg.vsync)
+        presenter = GlPresenter(src_w=cfg.out_w, src_h=cfg.out_h, monitor=cfg.monitor, out_fps=cfg.out_fps,
+                                vsync=cfg.vsync)
         presenter.show_info = True
         presenter.set_info(["upscaler: hazirlaniyor..."])
         presenter.redraw(["upscaler: hazirlaniyor..."])
@@ -895,17 +901,20 @@ def main(argv: list[str] | None = None) -> None:
     d = WatchConfig()
     ap.add_argument("--title", default=d.title, help="pencere basliginda gecen metin")
     ap.add_argument("--title-must", default=d.title_must, help="baslikta ayrica gecmesi gereken metin ('' = yok)")
+    ap.add_argument("--tv", action="store_true",
+                    help="TV modu: 1080p cikis, 50 FPS, ara kare ve SR yok, harici ekran, vsync kilidi (50 Hz)")
+    ap.add_argument("--repair", default="", help="TV modunda sikistirma onarim agi (ör. rep_v0); bos = ham")
     ap.add_argument("--delay", type=float, default=d.delay)
-    ap.add_argument("--monitor", default=d.monitor, help="auto ya da ekran adinin parcasi")
+    ap.add_argument("--monitor", default=None, help="auto ya da ekran adinin parcasi")
     ap.add_argument("--vsync", default=d.vsync, choices=["auto", "lock", "timer"])
-    ap.add_argument("--out-fps", type=float, default=d.out_fps)
+    ap.add_argument("--out-fps", type=float, default=None)
     ap.add_argument("--seconds", type=float, default=0.0, help="bu kadar sonra kapan (0: Esc)")
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--audio-device", default="", help="WASAPI cikis aygiti adinin parcasi")
     ap.add_argument("--av-offset-ms", type=float, default=0.0, help="ses/goruntu ince ayari (+: ses gec)")
     ap.add_argument("--split", action="store_true")
     ap.add_argument("--info", action="store_true", help="bilgi katmani acik baslasin (I)")
-    ap.add_argument("--proc", default=d.proc)
+    ap.add_argument("--proc", default=None)
     ap.add_argument("--sr", default=d.sr, help="SR modeli (rt4ksr-x2 ya da ince ayarli rt4ksr-x2-<ad>)")
     ap.add_argument("--run-name", default="")
     ap.add_argument("--av-measure", action="store_true", help="flas+bip test klibiyle A/V olcumu")
@@ -913,9 +922,15 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--score-shift", type=int, default=0, help="puan kaydirma testi (GT kare)")
     ap.add_argument("--dump-timing", action="store_true", help="kare ve tik zamanlarini CSV'ye yaz (sadece sayi)")
     a = ap.parse_args(argv)
-    cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=a.monitor, vsync=a.vsync,
-                      out_fps=a.out_fps, seconds=a.seconds, audio=not a.no_audio, audio_device=a.audio_device,
-                      av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=a.proc, sr=a.sr, run_name=a.run_name,
+    if a.tv:
+        # TV: kaynak 1080p50, ekran 1080p 50 Hz. Cikis kaynak hizinda, her tik gercek kare.
+        mon, fps, oh, ow = a.monitor or "external", a.out_fps or 50.0, 1080, 1920
+        proc = a.proc or ("repair" if a.repair else "pass")
+    else:
+        mon, fps, proc, oh, ow = a.monitor or d.monitor, a.out_fps or d.out_fps, a.proc or d.proc, d.out_h, d.out_w
+    cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=mon, vsync=a.vsync,
+                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
+                      av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=proc, sr=a.sr, run_name=a.run_name,
                       av_measure=a.av_measure, dump_timing=a.dump_timing, score=a.score,
                       score_shift=a.score_shift)
     w = Watcher(cfg)

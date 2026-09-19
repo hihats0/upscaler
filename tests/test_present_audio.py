@@ -120,3 +120,12 @@ def test_synced_player_locks_without_drift():
                     assert abs(out[0, 0] - want) < 0.004
     assert max(errs) < 1.0
     assert player.stats.hard_jumps == 0
+
+
+def test_pick_monitor_external_for_tv():
+    panel = MonitorInfo("Generic PnP Monitor", 0, 0, 1920, 1080, 144, primary=True)
+    tv = MonitorInfo("Generic PnP Monitor", -1920, 0, 1920, 1080, 50)
+    assert pick_monitor([panel, tv], prefer="external") == 1
+    assert pick_monitor([panel], prefer="external") == 0
+    assert swap_plan(50, 50) == ("lock", 1)
+    assert swap_plan(144, 50) == ("timer", 0)

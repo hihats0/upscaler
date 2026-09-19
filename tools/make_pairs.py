@@ -88,13 +88,17 @@ def main() -> None:
     ap.add_argument("--sharp-range", default="0:0", help="F26: segment basina rastgele unsharp araligi")
     ap.add_argument("--gt-sharp", default="", help="F26: tools/gt_sharpness.py ciktisi; yumusak GT segmentleri atlanir")
     ap.add_argument("--gt-min", type=float, default=0.0, help="F26: 4K spk_50_75 alt siniri")
+    ap.add_argument("--target", default="4k", choices=["4k", "1080"],
+                    help="F27: 1080 = hedef ayni karenin sikistirilmamis 1080p hali (onarim verisi, LR=HR boyutu)")
     args = ap.parse_args()
     out_dir = os.path.join(ROOT, "data", "pairs", args.name)
     os.makedirs(out_dir, exist_ok=True)
     sim_dir = os.path.join(ROOT, "data", "sim_tmp")
     os.makedirs(sim_dir, exist_ok=True)
     rng = np.random.default_rng(1234)
-    P, Q = args.lr, 2 * args.lr
+    P = args.lr
+    Q = P if args.target == "1080" else 2 * P
+    sc = 1 if args.target == "1080" else 2
     lr_buf, hr_buf, src_buf = [], [], []
     shard_i = len([f for f in os.listdir(out_dir) if f.startswith("shard_")])
     total_bytes = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
@@ -138,7 +142,12 @@ def main() -> None:
                             "--pre", f"{pre:.3f}", "--sharp", f"{sharp:.3f}"],
                            check=True, stdout=subprocess.DEVNULL)
             lo = RawReader(sim, 1920, 1080)
-            hi = RawReader(gt, 3840, 2160, s, args.seg_seconds, pre_vf="setpts=N/(60*TB)")
+            if args.target == "1080":
+                # Ayni filtre zinciri, kodlayicisiz: sim kare i <-> temiz kare i (fps secimi ayni)
+                from tod_sim import clean_vf
+                hi = RawReader(gt, 1920, 1080, s, args.seg_seconds, pre_vf=clean_vf(pre, sharp))
+            else:
+                hi = RawReader(gt, 3840, 2160, s, args.seg_seconds, pre_vf="setpts=N/(60*TB)")
             g_next = 0
             hr_frame = None
             i = 0
@@ -146,7 +155,7 @@ def main() -> None:
                 lr = lo.read()
                 if lr is None:
                     break
-                g = round(1.2 * i)
+                g = i if args.target == "1080" else round(1.2 * i)
                 while g_next <= g:
                     hr_frame = hi.read()
                     g_next += 1
@@ -159,7 +168,7 @@ def main() -> None:
                         for _try in range(5):
                             y = int(rng.integers(0, 1080 - P)) // 2 * 2
                             x = int(rng.integers(0, 1920 - P)) // 2 * 2
-                            h = hr_frame[2 * y:2 * y + Q, 2 * x:2 * x + Q]
+                            h = hr_frame[sc * y:sc * y + Q, sc * x:sc * x + Q]
                             if flat_ok(h):
                                 lr_buf.append(lr[y:y + P, x:x + P].copy())
                                 hr_buf.append(h.copy())

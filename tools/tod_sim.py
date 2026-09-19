@@ -46,6 +46,22 @@ def barcode_filter() -> str:
     return ",".join(parts)
 
 
+def clean_vf(pre: float = 1.0, sharp: float = 0.0) -> str:
+    """4K60 GT -> sikistirmadan onceki 1080p50 yuv420p (kodlayiciya giren kare).
+
+    F27 onarim verisi hedefi bu zincirin ciktisidir: girdi ile hedef arasindaki tek fark H.264."""
+    color = "in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=tv"
+    if pre < 0.999:
+        # F26: gercek TOD kamera goruntusu 1080p'den yumusak (yapim zinciri). Once kucult, sonra 1080p'ye buyut.
+        pw, ph = 2 * round(1920 * pre / 2), 2 * round(1080 * pre / 2)
+        scale = f"scale={pw}:{ph}:flags=area:{color},scale=1920:1080:flags=bicubic"
+    else:
+        scale = f"scale=1920:1080:flags=lanczos:{color}"
+    if sharp > 0:
+        scale += f",unsharp=5:5:{sharp}:5:5:0"
+    return f"setpts=N/({GT_FPS}*TB),fps={SIM_FPS}:round=near,{scale},format=yuv420p"
+
+
 def ffprobe(path: str) -> dict:
     out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                           "stream=codec_name,profile,width,height,r_frame_rate,bit_rate,nb_frames,pix_fmt,"
@@ -74,16 +90,7 @@ def main() -> None:
         raise SystemExit(f"GT {num / den:.3f} FPS; bu arac 60 (ya da 59,94) FPS GT bekliyor")
     # 59,94 FPS GT'nin kareleri sirayla tam 60 FPS sayilir (icerik %0,1 yavaslar). GT bankasi da
     # kareleri sirayla sayar; boylece 10 sn'de 0,6 karelik kayma birikmez.
-    color = "in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=tv"
-    if args.pre < 0.999:
-        # F26: gercek TOD kamera goruntusu 1080p'den yumusak (yapim zinciri). Once kucult, sonra 1080p'ye buyut.
-        pw, ph = 2 * round(1920 * args.pre / 2), 2 * round(1080 * args.pre / 2)
-        scale = f"scale={pw}:{ph}:flags=area:{color},scale=1920:1080:flags=bicubic"
-    else:
-        scale = f"scale=1920:1080:flags=lanczos:{color}"
-    if args.sharp > 0:
-        scale += f",unsharp=5:5:{args.sharp}:5:5:0"
-    vf = f"setpts=N/({GT_FPS}*TB),fps={SIM_FPS}:round=near,{scale},format=yuv420p"
+    vf = clean_vf(args.pre, args.sharp)
     if not args.no_barcode:
         vf += "," + barcode_filter()
     k = args.kbps

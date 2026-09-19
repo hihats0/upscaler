@@ -51,9 +51,19 @@ class MonitorInfo:
 
 
 def pick_monitor(mons: list[MonitorInfo], prefer: str = "auto") -> int | None:
-    """Cikis ekrani secimi: ada gore (prefer), yoksa en az 3840x2160 ve >=59 Hz olan en buyuk, yoksa birincil."""
+    """Cikis ekrani secimi: ada gore (prefer), yoksa en az 3840x2160 ve >=59 Hz olan en buyuk, yoksa birincil.
+
+    prefer="external": birincil olmayan ekran (TV modu; HDMI TV ile laptop paneli ayni adi
+    "Generic PnP Monitor" tasiyabiliyor, ad ise yaramaz). Birden fazlaysa 50 Hz'e en yakin. Yoksa birincil.
+    """
     if not mons:
         return None
+    if prefer == "external":
+        ext = [i for i, m in enumerate(mons) if not m.primary]
+        if ext:
+            return min(ext, key=lambda i: abs(mons[i].hz - 50))
+        prim = [i for i, m in enumerate(mons) if m.primary]
+        return prim[0] if prim else 0
     if prefer not in ("auto", ""):
         for i, m in enumerate(mons):
             if prefer.lower() in m.name.lower():
@@ -347,11 +357,11 @@ class GlPresenter:
             self.reopen()
             return
         if self.monitors_changed:
-            names = [(m.name, m.w, m.h) for m in self.monitors()]
-            cur = (self.monitor.name, self.monitor.w, self.monitor.h)
             want = self.monitors()
+            names = [(m.name, m.x, m.y, m.w, m.h, m.hz) for m in want]
+            cur = (self.monitor.name, self.monitor.x, self.monitor.y, self.monitor.w, self.monitor.h, self.monitor.hz)
             i = pick_monitor(want, self.prefer)
-            if cur not in names or (i is not None and (want[i].name, want[i].w, want[i].h) != cur):
+            if cur not in names or (i is not None and names[i] != cur):
                 self.reopen()
             else:
                 self.monitors_changed = False
