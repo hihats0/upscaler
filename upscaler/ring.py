@@ -242,6 +242,23 @@ class GpuFrameRing:
                 else:
                     self._in_use[slot] = n
 
+    def take_after(self, after_index: int | None, max_index: int | None, limit: int) -> list[tuple[Entry, torch.Tensor, int]]:
+        """On isleme (AI, goal 2026-09-20): sirasi after_index'ten buyuk (ve max_index'ten kucuk-esit)
+        en fazla `limit` girdi, sira sirasiyla. Slotlar kilitlenir: kopya bitince _release(gen, slot)."""
+        with self._lock:
+            out = []
+            for e in self._entries:
+                i = e.stamp.index
+                if after_index is not None and i <= after_index:
+                    continue
+                if max_index is not None and i > max_index:
+                    break
+                self._in_use[e.slot] = self._in_use.get(e.slot, 0) + 1
+                out.append((e, self.slots[e.slot], self.generation))
+                if len(out) >= limit:
+                    break
+            return out
+
     def meta_offset(self, before_t: float | None = None) -> int | None:
         """(meta - sira), before_t anindan onceki en yeni girdi: canli puanda gosterilen icerigin
         klip kare numarasi ile saat sirasi farki (klip basa sarinca degisir)."""

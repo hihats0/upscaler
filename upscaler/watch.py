@@ -60,6 +60,7 @@ class WatchConfig:
     repair: str = ""                    # TV modunda onarim agi (weights/repair/<ad>.pth), "" = ham
     ai: str = ""                        # TV modunda AI yeniden cizim agi (weights/ai/<ad>.pth), "" = yok
     ai_gain: float = 1.0                # AI farkinin carpani (agresiflik)
+    ai_ahead: bool = True               # AI: kare gelince on isle (sunum tikine bagli degil)
     ai_sat: float = 1.0                 # AI: renk doygunlugu
     ai_con: float = 1.0                 # AI: kontrast
     ai_blend: float = 0.6               # AI: durgun bolge harmani gucu (titreme bastirma), 0 = kapali
@@ -628,7 +629,8 @@ class Watcher:
             self.log.event("sr_yedek", istenen=self.cfg.sr, kullanilan=sr)
         proc = make_processor(self.cfg.proc, self.cfg.out_h, self.cfg.out_w, sr=sr, split=self.cfg.split,
                               repair=self.cfg.repair, ai=self.cfg.ai, ai_blend=self.cfg.ai_blend,
-                              ai_gain=self.cfg.ai_gain, ai_sat=self.cfg.ai_sat, ai_con=self.cfg.ai_con)
+                              ai_gain=self.cfg.ai_gain, ai_sat=self.cfg.ai_sat, ai_con=self.cfg.ai_con,
+                              ai_ahead=self.cfg.ai_ahead)
         canv = getattr(proc, "canvases", None) or [(1080, 1920)]
         for h, w in canv:
             z = torch.zeros((h, w, 4), dtype=torch.uint8, device="cuda")
@@ -676,6 +678,8 @@ class Watcher:
         gpu = GpuMonitor(cfg.stats_every)
         gpu.start()
         proc = self._make_proc()
+        if hasattr(proc, "attach"):
+            proc.attach(ring)
         log.event("islemci_hazir", ad=proc.name, tuvaller=getattr(proc, "canvases", None),
                   hazirlik_sn=round(time.time() - t_boot, 2))
 
@@ -779,10 +783,18 @@ class Watcher:
                     continue
                 try:
                     fa, fb = p.frames()
-                    y = proc(fa, fb, p.alpha)
-                    torch.cuda.synchronize()
+                    ahead = getattr(proc, "async_ahead", False)
+                    if ahead:
+                        # AI on isleme: hazir kare; AI akisini bekleme (sadece bu akis)
+                        y = proc.present_pick(p)
+                        torch.cuda.current_stream().synchronize()
+                    else:
+                        y = proc(fa, fb, p.alpha)
+                        torch.cuda.synchronize()
                     t_b = time.perf_counter()
                     r = presenter.present(y, info_lines)
+                    if ahead:
+                        proc.work_ahead()
                     if probe is not None:
                         probe.on_output_frame(y, r["t_end"], T, p.a.stamp.t)
                     if sharp is not None and first_frame_logged:
@@ -800,6 +812,8 @@ class Watcher:
                         del proc
                         torch.cuda.empty_cache()
                         proc = self._make_proc()
+                        if hasattr(proc, "attach"):
+                            proc.attach(ring)
                     k += 1
                     continue
                 finally:
@@ -939,6 +953,8 @@ class Watcher:
             log.write_json("av_ham.json", probe.dump())
         if sharp is not None:
             summary["keskinlik"] = sharp.summary()
+        if getattr(proc, "async_ahead", False):
+            summary["ai_onisleme"] = {"hazir": proc.hits, "hazir_degil_ham": proc.misses}
         if scorer is not None:
             scorer.finish()
             summary["puan"] = scorer.summary()
@@ -972,6 +988,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--ai-guc", type=float, default=d.ai_gain, help="AI farkinin carpani (1 = egitildigi gibi, 2 = cok agresif)")
     ap.add_argument("--ai-renk", type=float, default=d.ai_sat, help="AI: renk doygunlugu (1 = dokunma, 1,2 = canli)")
     ap.add_argument("--ai-kontrast", type=float, default=d.ai_con, help="AI: kontrast (1 = dokunma)")
+    ap.add_argument("--ai-senkron", action="store_true", help="AI on islemeyi kapat (eski: sunum tikinde isle)")
     ap.add_argument("--ai-blend", type=float, default=d.ai_blend, help="AI durgun bolge harmani (0 = kapali)")
     ap.add_argument("--probe-sharp", type=float, default=0.0, help="saniyede N kez cikis ve ham keskinligi (sadece sayi)")
     ap.add_argument("--delay", type=float, default=d.delay)
@@ -999,7 +1016,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         mon, fps, proc, oh, ow = a.monitor or d.monitor, a.out_fps or d.out_fps, a.proc or d.proc, d.out_h, d.out_w
     cfg = WatchConfig(title=a.title, title_must=a.title_must, delay=a.delay, monitor=mon, vsync=a.vsync,
-                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, ai=a.ai, ai_blend=a.ai_blend, ai_gain=a.ai_guc, ai_sat=a.ai_renk, ai_con=a.ai_kontrast, probe_sharp=a.probe_sharp, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
+                      out_fps=fps, seconds=a.seconds, tv=a.tv, repair=a.repair, ai=a.ai, ai_blend=a.ai_blend, ai_gain=a.ai_guc, ai_sat=a.ai_renk, ai_con=a.ai_kontrast, ai_ahead=not a.ai_senkron, probe_sharp=a.probe_sharp, out_h=oh, out_w=ow, audio=not a.no_audio, audio_device=a.audio_device,
                       av_offset_ms=a.av_offset_ms, split=a.split, info=a.info, proc=proc, sr=a.sr, run_name=a.run_name,
                       av_measure=a.av_measure, dump_timing=a.dump_timing, score=a.score,
                       score_shift=a.score_shift)

@@ -573,13 +573,145 @@ class AiProcessor(PassProcessor):
         return self._out
 
 
+class AiAheadProcessor(AiProcessor):
+    """AI on isleme (2026-09-19 mac gecesi): yayin 1,5 sn gecikmeli gosterildigi icin her kare
+    tampona girince ayri bir GPU akisinda AI'dan gecer, sonuc onbellekte hazir bekler. Sunum aninda
+    sadece hazir kare gosterilir (~1-2 ms). AI suresi TV tikine bagli degil: isinip yavaslayan GPU'da
+    ara sira 20 ms'i asan kare vsync kacirmaz (senkron hatta 10 sn'de 1-4 kacirma, isi kisitlamasi).
+
+    Sirali isler (3 kare penceresi ve harman onceki cikisa bagli). Sadece motor-ici harman/guc/renk
+    motoruyla (eng_blend) calisir; yoksa AiProcessor gibi davranir. Watch: attach(ring), her tikte
+    present_pick(p) (gosterilecek), sunumdan sonra work_ahead() (sonraki kareleri kuyruga at).
+    """
+
+    LEAD = 8      # gosterilen karenin en fazla kac kare onunu isle
+    PER_CALL = 3  # bir cagrida en fazla kac kare (geride kalinca yetisme)
+
+    def __init__(self, *a, **kw) -> None:
+        super().__init__(*a, **kw)
+        self.ring = None
+        self.async_ahead = self.eng_blend
+        self.ai_stream = torch.cuda.Stream()
+        n = self.LEAD + 8
+        self._pool = [torch.empty((1, 3, self.out_h, self.out_w), dtype=torch.uint8, device="cuda") for _ in range(n)]
+        self._cache: dict[int, tuple[torch.Tensor, torch.cuda.Event]] = {}
+        self._pending: list[tuple[torch.cuda.Event, int, int]] = []  # (kopya bitti, gen, slot)
+        self._last_in: int | None = None
+        self._gen: int | None = None
+        self._disp: int | None = None
+        self._run = 0
+        self.hits = self.misses = 0
+        if self.async_ahead:
+            self.name += "+onisleme"
+
+    def attach(self, ring) -> None:
+        self.ring = ring
+
+    def _reset(self) -> None:
+        for buf, _ in self._cache.values():
+            self._pool.append(buf)
+        self._cache.clear()
+        self._last_in = None
+        self._run = 0
+
+    def _free_done(self) -> None:
+        keep = []
+        for ev, gen, slot in self._pending:
+            if ev.query():
+                self.ring._release(gen, slot)
+            else:
+                keep.append((ev, gen, slot))
+        self._pending = keep
+
+    def _evict(self, below: int) -> None:
+        for i in [i for i in self._cache if i < below]:
+            buf, ev = self._cache.pop(i)
+            ev.synchronize()
+            self._pool.append(buf)
+
+    @torch.inference_mode()
+    def work_ahead(self) -> None:
+        if not self.async_ahead or self.ring is None or self._disp is None:
+            return
+        self._free_done()
+        items = self.ring.take_after(self._last_in, self._disp + self.LEAD, self.PER_CALL)
+        if not items:
+            return
+        with torch.cuda.stream(self.ai_stream):
+            for e, view, gen in items:
+                if gen != self._gen:
+                    self._gen = gen
+                    self._reset()
+                idx = e.stamp.index
+                if self._last_in is not None and idx != self._last_in + 1:
+                    self._run = 0  # sira atladi (sure kaymasi, yeniden kilit): pencereyi bastan kur
+                h = self._hist
+                for i in range(self.frames - 1):
+                    h[i].copy_(h[i + 1])
+                h[-1].copy_(view[..., :3].permute(2, 0, 1))
+                ev_copy = torch.cuda.Event()
+                ev_copy.record()
+                self._pending.append((ev_copy, gen, e.slot))
+                if self._run == 0:
+                    h[:] = h[-1]
+                    self._po.copy_(h[-1][None])
+                self._run += 1
+                out_idx = idx if self._run == 1 else idx - self.frames // 2
+                y = self.eng(x=h.view(1, 3 * self.frames, self.out_h, self.out_w), po=self._po)["y"]
+                self._po.copy_(y)
+                if out_idx in self._cache:
+                    buf, _ = self._cache.pop(out_idx)
+                else:
+                    if not self._pool:
+                        self._evict(min(self._cache) + 1)
+                    buf = self._pool.pop()
+                buf.copy_(y)
+                ev = torch.cuda.Event()
+                ev.record()
+                self._cache[out_idx] = (buf, ev)
+                self._last_in = idx
+
+    @torch.inference_mode()
+    def present_pick(self, p) -> torch.Tensor:
+        """Gosterilecek kare: onbellekte hazirsa AI cikisi, degilse ham (sayilir)."""
+        e = p.a if p.alpha < 0.5 else p.b
+        src = p.fa if p.alpha < 0.5 else p.fb
+        idx = e.stamp.index
+        if p.gen != self._gen and self._gen is not None:
+            self._reset()
+            self._gen = p.gen
+        if self._disp is None:
+            self._gen = p.gen
+            self._last_in = idx - 1  # ilk karede onceki kareleri isleme
+        self._disp = idx
+        self._evict(idx - 1)
+        raw = src[..., :3].permute(2, 0, 1).unsqueeze(0)
+        hit = self._cache.get(idx)
+        if hit is None:
+            self.misses += 1
+            if self.split:
+                self._out.copy_(raw)
+                return self._out
+            return raw
+        self.hits += 1
+        buf, ev = hit
+        torch.cuda.current_stream().wait_event(ev)
+        if not self.split:
+            return buf
+        half = self.out_w // 2
+        self._out.copy_(buf)
+        self._out[:, :, :, half:].copy_(raw[:, :, :, half:])
+        self._out[:, :, :, half - 2:half + 2] = 255
+        return self._out
+
+
 PROCESSORS = ["baseline", "rife", "rife-lite", "rife-flow", "rife-lite-flow", "rife-flow-trt",
               "sr", "rife-flow-sr", "rife-flow-trt-sr", "fused-sr", "pass", "repair", "ai"]
 
 
 def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "rt4ksr-x2",
                    split: bool = False, repair: str = "", ai: str = "", ai_blend: float = 0.6, ai_gain: float = 1.0,
-                   ai_sat: float = 1.0, ai_con: float = 1.0) -> BaselineProcessor:
+                   ai_sat: float = 1.0, ai_con: float = 1.0, ai_ahead: bool = True) -> BaselineProcessor:
     if name == "baseline":
         return BaselineProcessor(out_h, out_w)
     if name == "rife":
@@ -605,6 +737,6 @@ def make_processor(name: str, out_h: int = 2160, out_w: int = 3840, sr: str = "r
     if name == "repair":
         return RepairProcessor(repair, out_h, out_w, split=split)
     if name == "ai":
-        return AiProcessor(ai, out_h, out_w, split=split, blend=ai_blend, gain=ai_gain,
-                           sat=ai_sat, con=ai_con)
+        cls = AiAheadProcessor if ai_ahead else AiProcessor
+        return cls(ai, out_h, out_w, split=split, blend=ai_blend, gain=ai_gain, sat=ai_sat, con=ai_con)
     raise ValueError(f"bilinmeyen islemci: {name}")
