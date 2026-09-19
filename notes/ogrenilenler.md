@@ -184,3 +184,11 @@ Doğrulanmış ya da kaynağı olan bilgiler. Tahminler ayrıca "tahmin" diye i�
 - 2026-09-19: Laptop HDMI TV'si glfw'de 1920x1080 50 Hz birincil olmayan ekran, adı panelle aynı ("Generic PnP Monitor"). Ses çıkışı "AAA (NVIDIA High Definition Audio)". TV modunda vsync kilidi interval 1 çalışıyor (ölçüldü).
 - 2026-09-19: 4,8 Mbps H.264 sıkıştırması CC klip doğrulamasında 35,9 dB PSNR-Y, hf 0,83 (ince detayın ~%17'si gidiyor). Tek kareli L1 onarımı +0,2-0,3 dB verir ama canlı TOD'da görüntüyü yumuşatır (spk_50_75 -%10..21). Ölçüldü.
 - 2026-09-19: TOD penceresi WGC'de bazen 1920x1079 geliyor (%10 kare). Çift boyut isteyen ağlarda doldur-kırp gerekir. Ölçüldü.
+
+## 2026-09-19 (AI yeniden çizim, ölçüldü)
+- Keskin CC 1080p hedefin spk_50_75'i doğrulama segmentlerinde 0,37-0,38; TOD sim girdisi 0,16.
+- GAN (0,05) + LPIPS + L1 ile AiNet 48x8x3: LPIPS 0,111 -> 0,067 (tam kare), spk 0,32; güç 1,3 ile 0,39.
+- Durgun bölge harmanı titremeyi kalite kaybetmeden düşürür; küçük örnek (57 kare) titremeyi iyimser gösterdi (147 karede daha yüksek).
+- TV penceresi 1 px kısaysa DWM onu birincil panelin 144 Hz'inde sunar; TV'ye kilit için birincil olmayan ekranda tam boy.
+- AI'yı sunum tikinde çalıştırmak ısınmada vsync kaçırıyor; 1,5 sn tampon sayesinde ön işleme sunumu 0,14 ms'ye indirdi.
+- TOD/Chrome kendisi dakikada ~20 aksama + ara ara 0,3-1 sn donma yapıyor.

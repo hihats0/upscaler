@@ -2,7 +2,16 @@
 
 **AMAÇ: Canlı maçı (TOD) harici 4K ekranda 4K 60 FPS izlemek, 4070 Laptop'ta.**
 
-## Şu an neredeyiz (2026-09-19 akşam, /goal: AI yeniden çizim "S24 Ultra gibi")
+## Şu an neredeyiz (2026-09-19 22:00, /goal AI yeniden çizim: 4/5 kriter geçti)
+
+- ✅ ai_v4 (48x8x3) + güç + harman + renk motorda (9,0 ms), **ön işleme** (`AiAheadProcessor`). Kısayollar: "Maç TV AI" (güç 1,3, harman 0,85), "Maç TV AI kıyas", "Maç TV AI agresif" (1,45 / 0,9). Doğrulama: spk 0,390 / 0,427 (hedef 0,379), titreme 1,04 / 1,02, LPIPS 0,070 (ham 0,111).
+- ✅ 87 dk canlı TOD maçı: 50,0 FPS, geç tik 0, AI hazır %99,06, VRAM sabit.
+- ✅ TV takılmasının bizim tarafı düzeltildi (TV penceresi tam boy; 16:24'ten beri 144 Hz'de sunuyordu).
+- ⏳ **Kriter 1 açık:** TOD açıkken 2 dk canlı keskinlik (`--probe-sharp 2`). Yiğit'e 3 anlama sorusu sorulacak.
+- Sonra: `--dump-timing` ile bizim takılma payımız, F28 (TOD aksamasını RIFE ile doldur), daha büyük model (ön işleme sayesinde sığar).
+- Rapor: `reports/2026-09-20-ai-yeniden-cizim.md`.
+
+## Önceki durum (2026-09-19 akşam, /goal: AI yeniden çizim "S24 Ultra gibi")
 
 Goal: canlı TOD TV'de AI kareyi yeniden çizsin (keskin çim, canlı renk, titremesiz), 1080p 50 FPS. Rapor: `reports/2026-09-20-ai-yeniden-cizim.md`.
 - ✅ A tarama (`tools/ai_eval.py`, `runs/ai_eval/tarama1.json`): "küçült + GAN ile yeniden çiz" (540p/270p) PSNR -4..-8 dB, titreme 1,5-1,8: elendi. En iyi algısal: Real-ESRGAN x2 1080p'de + geri küçültme (LPIPS 0,100, spk 0,31) ama 2 sn/kare. Hazır hiçbiri canlıya sığmıyor + iyi değil.

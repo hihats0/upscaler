@@ -1,7 +1,7 @@
 # AI yeniden çizim ("S24 Ultra gibi")
 
 - **Tarih:** 2026-09-19 akşam (goal adı 2026-09-20)
-- **Durum:** araştırma (sürüyor)
+- **Durum:** onaylı (ölçüldü); canlı TOD keskinlik ölçümü açık
 - **Kapsam:** Canlı TOD 1080p karesini AI ile keskin (çim dokusu), titremesiz yeniden çizmek, TV modunda 1080p 50 FPS. A: hazır model taraması, B: keskin hedefli veri, C: ince ayar, D: TV moduna takma. Önceki: [TV modu ve onarım v0](2026-09-19-tv-modu-ve-onarim-v0.md), [F26](2026-09-16-f26-tod-yumusaklik.md).
 
 ## A. Hazır model taraması
@@ -82,7 +82,8 @@ Doğrulama yamalarında girdinin hf'si (≥ 0,5 Nyquist enerjisi) hedefin 0,49'u
 | girdi (ham) | | | 34,66 / 0,0966 / 0,493 / 1,09 |
 | ai_v1 | 48x8x3, 5 bin GAN'sız + GAN 0,05 | 12 bin | 34,49 / **0,0722** / **0,667** / 1,36 |
 | ai_v2 | v1'den, zamansal 5 | 3 bin (durduruldu) | 34,60 / 0,0757 / 0,619 / 1,33 (detay düştü, titreme az düştü) |
-| ai_v3 | v1'den, GAN 0,15, LPIPS 2, L1 0,5 | sürüyor | |
+| ai_v3 | v1'den, GAN 0,15, LPIPS 2, L1 0,5 | 4 bin (durduruldu) | 34,41 / 0,0842 / 0,581 / 1,33 (geri gitti: hakem sıfırdan başladı) |
+| **ai_v4** | v1'den, v1 ayarları, ısınmada hakem de eğitilir, 84/74 °C | **30 bin (27 binde en iyi)** | 34,24 / **0,0562** / 0,766 / 1,53 |
 
 **Tam kare (ai_eval, 3 doğrulama klibi):**
 
@@ -107,9 +108,60 @@ Doğrulama yamalarında girdinin hf'si (≥ 0,5 Nyquist enerjisi) hedefin 0,49'u
 - TV: Windows 1920x1080 @ 50 Hz, TV'nin en yüksek modu 1080p 60 (EnumDisplaySettings).
 - Yiğit'in göz testi (ai_v1, güç 1): "çok fark yok". Güç 1,8 + renk sonrası geri bildirim bekleniyor.
 
+### ai_v4 tam kare (ai_eval, 147 kare, `runs/ai_eval/v4_final.json`, `v4_harman.json`)
+
+| Aday | PSNR | LPIPS | spk_50_75 (hedef 0,379) | titreme (≤ 1,15) |
+|---|---|---|---|---|
+| ham | 34,46 | 0,111 | 0,161 | 0,98 |
+| v4 + güç 1,3 + harman 0,6 | 33,80 | 0,070 | 0,391 | 1,255 ✗ |
+| v4 + güç 1,6 + harman 0,75 (maçta izlenen) | 33,28 | 0,079 | 0,464 (+%22 ✗) | 1,227 ✗ |
+| **v4 + güç 1,3 + harman 0,85** ("Maç TV AI") | 33,80 | **0,070** | **0,390 (+%3)** | **1,037** |
+| **v4 + güç 1,45 + harman 0,9** ("Maç TV AI agresif") | 33,55 | 0,074 | **0,427 (+%13)** | **1,024** |
+
+Not: 57 karelik örnekte güç 1,3 + harman 0,6 titremesi 1,13 çıkmıştı; 147 karede 1,26. Küçük örnek titremeyi iyimser gösterdi.
+
+## E. Maç gecesi: takılma, ön işleme, 87 dk canlı sınav
+
+**Takılmanın kök sebebi (bizim hata):** 16:24 DPI düzeltmesinden sonra TV penceresi 1920x1079 oldu. DWM bu pencereyi kompozisyona aldı ve birincil panelin 144 Hz'inde sundu: ham TV modu bile 144,06 "FPS" (16:20'de 50,01 idi). Kareler TV'nin 50 Hz'ine oturmadı. Düzeltme (`present.py`): birincil olmayan ekranda pencere tam boy. Kilit geri geldi.
+
+**Kaçan vsync:** AI kare başı 12-15 ms (ısıda GPU saati 2490 → 1935 MHz), 10 sn'de 1-4 vsync kaçtı. Keskinlik probu (`--probe-sharp`, CPU kopyası) saniyede 2 tik daha kaçırıyordu, maç kısayolundan çıkarıldı. Kalıcı çözüm `AiAheadProcessor`: yayın 1,5 sn gecikmeli gösterildiği için her kare tampona girer girmez ayrı CUDA akışında AI'dan geçer, sonuç önbellekte bekler. Sunum sadece hazır kareyi gösterir (işlem p50 0,14 ms). Test: senkron yolla aynı çıkış (`tests/test_ai_ahead.py`). Chrome tam ekrandan çıkınca (1079/1020 satır) kare senkron sığdırma yoluna düşer (ilk sürümde bu durumda TV'de görüntü kesildi, düzeltildi).
+
+**87 dk canlı TOD maçı** (`runs/watch_20260919_203218`, v4 güç 1,6 harman 0,75, ön işleme):
+
+| | |
+|---|---|
+| Çıkış | 49,79 FPS ortalama (donmalar ve TOD penceresinin kapanması dahil); 10 dk pencerelerinin 384/459'u ≥ 49,9, en iyisi 50,002 |
+| Geç tik | **0** / 259.798 |
+| Geç sunum | 175 (%0,067) |
+| AI hazır kare | 257.346 (%99,06); ham 2.452 (başlangıç, donma, pencere kapanması) |
+| VRAM (smi) | 2118 → 2101 MB, sabit |
+| GPU | ort. 80,2 °C, maks 85 °C, 11 pencerede ısı kısıtlaması |
+| Ses | 2 sert atlama, eksik 0 |
+| Kaynak | 50,29 FPS; 3 donma (~1 sn) |
+
+**Kaynağın kendi aksaması** (`tools/content_fps.py`, Chrome penceresinde içerik değişimi, sadece sayı): 15 sn'de 50,06 FPS temiz; 60 sn'de 49,5 FPS, 10 tekrar (~40 ms), 8 gecikme, 2 uzun boşluk (en uzun 302 ms). Yiğit'in maçta hissettiği takılmanın önemli kısmı TOD/Chrome'dan. Bizim tik seçiminin payı (`--dump-timing`) ölçülmedi. Fikir F28: kaynak aksamasını RIFE ara kareyle doldurmak.
+
+TV çıkış penceresi tam ekran yolunda olduğu için WGC ile dışarıdan ölçülemiyor (tek kare gelir).
+
+## Çıkış kriterleri
+
+| # | Kriter | Sonuç |
+|---|---|---|
+| 1 | Canlı TOD'da spk_50_75 ≥ 0,20 ve hamdan yüksek | **Ölçülmedi.** Maçta prob kapalıydı (vsync kaçırıyordu), maçtan sonra TOD akmıyordu. Simüle klipte ham 0,161, AI 0,39-0,43. Yayın açılınca 2 dk ölçülecek. |
+| 2 | Titreme ≤ 1,15 | ✅ 1,037 (güç 1,3) / 1,024 (güç 1,45); doğrulama, 147 kare |
+| 3 | Doğrulamada spk keskin hedefe ±%15 | ✅ 0,390 (+%3) / 0,427 (+%13), hedef 0,379 |
+| 4 | TOD 10 dk ≥ 49,9 FPS, geç tik ≤ %0,1, VRAM sabit | ✅ maçta 10 dk pencereleri 50,0 FPS, geç tik 0, VRAM 2118 sabit (güç 1,6 motoru; 1,3/1,45 motorları aynı maliyet, 9,0 ms) |
+| 5 | "Maç TV AI" ve "Maç TV AI kıyas" kısayoldan denendi | ✅ ikisi + "agresif" kısayoldan açıldı, doğru motor, hata 0; kıyas maçta TOD'da kullanıldı |
+
+**Göz testi (Yiğit, maç):** "baya fark ediyor"; takılma hissi kaldı (kaynak aksaması, yukarıda). "S24 Ultra" düzeyi ölçüyle kanıtlanmadı: LPIPS hamdan %37 iyi, spk hedefe ulaştı, ama bu gözün "kamera kalitesi" algısının tamamı değil.
+
 ## Açık sorular
 
 - RealBasicVSR ve difüzyon modelleri ölçülmedi (sebepler yukarıda).
+- Kriter 1 (canlı TOD keskinliği) açık: TOD açıkken `watch --tv --ai ai_v4 --ai-guc 1.3 --ai-blend 0.85 --probe-sharp 2 --seconds 120` (prob vsync kaçırabilir, sadece ölçüm için).
+- Takılmada bizim payımız: `--dump-timing` ile TV tikinde tekrar/atlama sayısı. Kaynak aksaması için F28 (RIFE ile doldurma).
+- Daha büyük model: ön işleme sayesinde AI artık 20 ms tik sınırına bağlı değil; ortalama 20 ms'nin altında kaldıkça 64 kanal ya da daha derin ağ sığar (ısı sınırı).
+- Eğitim ısısı: klimasız 85 °C'ye çıkıyor (84/74 sınırı).
 
 ## Kaynaklar
 

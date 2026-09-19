@@ -57,3 +57,7 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 - ⏳ 2026-09-16: F26 modellerini gerçek TOD'da ölçmek için TOD'da bir tekrar ya da özet tam ekran açık olmalı (`sharpness_probe --window ... --sr rt4ksr-x2-ft2 rt4ksr-x2-<yeni>`).
 
 **2026-09-19 15:25 (goal, TOD tıkanması):** TOD oynatıcısı önce duraklatılmıştı (agent Play'e bastı). Sonra oynatıcı "oynuyor" gösterdiği halde görüntü akmadı (300 sn'de 412 kare, 52 donma; ham modda da aynı). Onarımlı modun TOD'da 5 dk testi ve keskinlik ölçümü bunun için bekliyor. Yiğit: TOD'da oynayan bir yayın/tekrar aç, tam ekran bırak.
+
+## 2026-09-19 gece (AI yeniden çizim)
+- TOD açıkken 2 dk canlı keskinlik ölçümü (kriter 1) için yayın açılsın; agent `--probe-sharp 2` ile ölçecek.
+- Hangi kısayol: "Maç TV AI" (güç 1,3) mı "agresif" (1,45) mi? Gözle seç.
