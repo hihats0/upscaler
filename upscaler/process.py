@@ -639,6 +639,13 @@ class AiAheadProcessor(AiProcessor):
             return
         with torch.cuda.stream(self.ai_stream):
             for e, view, gen in items:
+                if tuple(view.shape[:2]) != (self.out_h, self.out_w):
+                    # Kaynak 1080p degil (Chrome tam ekrandan cikti, 1920x1079): on isleme yok,
+                    # present_pick senkron yola (sigdirma) duser.
+                    self.ring._release(gen, e.slot)
+                    self._last_in = e.stamp.index
+                    self._run = 0
+                    continue
                 if gen != self._gen:
                     self._gen = gen
                     self._reset()
@@ -676,6 +683,10 @@ class AiAheadProcessor(AiProcessor):
         """Gosterilecek kare: onbellekte hazirsa AI cikisi, degilse ham (sayilir)."""
         e = p.a if p.alpha < 0.5 else p.b
         src = p.fa if p.alpha < 0.5 else p.fb
+        if tuple(src.shape[:2]) != (self.out_h, self.out_w):
+            self._disp = e.stamp.index
+            self.misses += 1
+            return AiProcessor.__call__(self, p.fa, p.fb, p.alpha)  # sigdirma + senkron AI
         idx = e.stamp.index
         if p.gen != self._gen and self._gen is not None:
             self._reset()
