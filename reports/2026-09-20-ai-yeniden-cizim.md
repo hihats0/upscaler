@@ -75,7 +75,37 @@ Doğrulama yamalarında girdinin hf'si (≥ 0,5 Nyquist enerjisi) hedefin 0,49'u
 
 ## C. İnce ayar
 
-(sürüyor)
+`tools/train_ai.py`: L1 + LPIPS-VGG + GAN (PatchDisc, hinge) + zamansal (ardışık kare farkı hedefinkine L1), EMA 0,999, laptop, 80/70 °C duraklama, watch açılınca 5 sn içinde durur.
+
+| Koşu | Ayar | Adım | Yama doğrulama: PSNR / LPIPS / hf / titreme |
+|---|---|---|---|
+| girdi (ham) | | | 34,66 / 0,0966 / 0,493 / 1,09 |
+| ai_v1 | 48x8x3, 5 bin GAN'sız + GAN 0,05 | 12 bin | 34,49 / **0,0722** / **0,667** / 1,36 |
+| ai_v2 | v1'den, zamansal 5 | 3 bin (durduruldu) | 34,60 / 0,0757 / 0,619 / 1,33 (detay düştü, titreme az düştü) |
+| ai_v3 | v1'den, GAN 0,15, LPIPS 2, L1 0,5 | sürüyor | |
+
+**Tam kare (ai_eval, 3 doğrulama klibi):**
+
+| Aday | PSNR | LPIPS | spk_50_75 (hedef 0,37-0,38) | titreme |
+|---|---|---|---|---|
+| ham | 34,46 | 0,110 | 0,162 | 0,90-0,98 |
+| ai_v1 (12 bin) | 34,40 | 0,084 | 0,241 | **1,235** |
+| ai_v1 + harman 0,6 | 34,40 | 0,085 | 0,241 | 0,961 |
+| ai_v1 + harman 0,85 | 34,40 | 0,085 | 0,241 | 0,799 |
+| **ai_v1 + güç 1,8 + harman 0,6** | 33,79 | **0,079** | **0,331** | **1,094** |
+| ai_v1 + güç 2,5 + harman 0,6 | 32,93 | 0,092 | 0,433 | 1,224 |
+
+- **Durgun bölge harmanı** (`StaticBlend`): girdinin t ile t-1 farkı 5x5 ortalamada < 2/255 olan pikselde çıkış önceki çıkışla %60 karışır. Titremeyi ~%22 düşürdü, kalite aynı. Zamansal kaybı büyütmek (v2) detayı da düşürdü, harman daha iyi.
+- **Güç** (AI'nın eklediği farkın çarpanı): 1,8'de spk hedefin %11 altında, LPIPS en iyi, titreme sınır içinde. PSNR -0,7 dB (keskin doku PSNR'ı düşürür, beklenen).
+
+## D. TV modu
+
+`watch --tv --ai <ad> [--ai-guc 1.8] [--ai-renk 1.2] [--ai-kontrast 1.05] [--ai-blend 0.6] [--split] [--probe-sharp 2]`. `AiProcessor`: son 3 yeni kare tamponda, çıkış 1 kare (20 ms) geriden. Güç, renk (BT.709 lumaya göre doygunluk, orta griye göre kontrast) ve harman TensorRT motorunun içinde (`build_trt_ai.py --blend --gain --sat --con`): 48x8x3 hepsi dahil **GPU p50 9,45 ms** (harman PyTorch'tayken canlıda işlem p50 ~19 ms ve 47-50 FPS'ti).
+
+- TOD ilk canlı (18:00, harman PyTorch'ta, eğitim ilk 30 sn GPU'yu paylaştı): 47-50 FPS, işlem p50 ~19 ms, GPU 84-86 °C. Yetmez.
+- TOD agresif (18:06, motor içinde): girişte 50 FPS, işlem p95 13,9 ms, geç tik 0, GPU 70 °C. Ama çıkış 142 FPS sayıldı: TV penceresi odak dışıyken swap vsync'i beklemedi, döngü serbest döndü. Düzeltme: lock modunda tik aralığı çıkış periyoduna bağlandı (`vsync_bloklamiyor` olayı).
+- TV: Windows 1920x1080 @ 50 Hz, TV'nin en yüksek modu 1080p 60 (EnumDisplaySettings).
+- Yiğit'in göz testi (ai_v1, güç 1): "çok fark yok". Güç 1,8 + renk sonrası geri bildirim bekleniyor.
 
 ## Açık sorular
 

@@ -52,10 +52,16 @@ class Runner:
         self.name = name
         self.frames = 1
         self.blend = None
-        if "+blend" in name:  # ör. ai_v2+blend0.6: cikarimda durgun bolge harmani (StaticBlend)
-            name, k = name.split("+blend")
-            from upscaler.models.ai import StaticBlend
-            self.blend = StaticBlend(float(k or 0.6))
+        self.gain = 1.0
+        # ör. ai_v1+g1.8+blend0.6: g = AI farkinin carpani, blend = durgun bolge harmani (StaticBlend)
+        parts = name.split("+")
+        name = parts[0]
+        for q in parts[1:]:
+            if q.startswith("blend"):
+                from upscaler.models.ai import StaticBlend
+                self.blend = StaticBlend(float(q[5:] or 0.6))
+            elif q.startswith("g"):
+                self.gain = float(q[1:])
         if name == "ham":
             self.net = None
             return
@@ -78,7 +84,11 @@ class Runner:
         x = x.float() / 255
         if not self.fp32:
             x = x.half()
-        y = self.net(x).float().clamp(0, 1)
+        y = self.net(x).float()
+        if self.gain != 1.0:
+            m = x[:, k * 3:k * 3 + 3].float()
+            y = m + self.gain * (y - m)
+        y = y.clamp(0, 1)
         if self.blend is not None:
             y = self.blend(x[:, k * 3:k * 3 + 3].float(), y)
         return (y[0].permute(1, 2, 0) * 255).round().byte().cpu().numpy()

@@ -175,6 +175,7 @@ def main() -> None:
     ap.add_argument("--hot", type=float, default=80.0)
     ap.add_argument("--cool", type=float, default=70.0)
     ap.add_argument("--group", type=int, default=8)
+    ap.add_argument("--disc-init", default="", help="runs/train_<ad>/disc.pth: GAN hakemini kaldigi yerden al")
     args = ap.parse_args()
     device = "cuda"
     torch.backends.cudnn.benchmark = True
@@ -204,6 +205,10 @@ def main() -> None:
     disc = PatchDisc(48).to(device)
     opt = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.99))
     opt_d = torch.optim.Adam(disc.parameters(), lr=args.lr, betas=(0.9, 0.99))
+    if args.disc_init:
+        dk = torch.load(args.disc_init, map_location=device, weights_only=True)
+        disc.load_state_dict(dk["disc"])
+        opt_d.load_state_dict(dk["opt_d"])
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.iters, eta_min=args.lr * 0.05)
     train_files = sum((shards(t) for t in args.train), [])
     val = [load_shard(p) for p in shards(args.val)]
@@ -258,7 +263,7 @@ def main() -> None:
             opt.step()
             sched.step()
             d_loss = torch.zeros(())
-            if use_gan:
+            if args.gan > 0:  # hakem isinmada da egitilir: GAN acildiginda hazir olsun
                 for p_ in disc.parameters():
                     p_.requires_grad_(True)
                 with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -285,6 +290,8 @@ def main() -> None:
                             round(n_sum / dt, 1)])
                 logf.flush()
                 save_ai(ema, args.name + "_son", {"iter": it})
+                torch.save({"disc": disc.state_dict(), "opt_d": opt_d.state_dict(), "iter": it},
+                           os.path.join(run_dir, "disc.pth"))
                 mark = ""
                 if ev["lpips"] < best:
                     best = ev["lpips"]

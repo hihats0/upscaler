@@ -680,7 +680,6 @@ class Watcher:
                   hazirlik_sn=round(time.time() - t_boot, 2))
 
         out_period = 1.0 / cfg.out_fps
-        last_lock_T, free_logged = None, False
         t0 = time.perf_counter()
         k = 0
         first_frame_logged = False
@@ -736,17 +735,6 @@ class Watcher:
                 # --- tik zamani ---
                 if presenter.mode == "lock":
                     T = presenter.vclock.next_vsync(time.perf_counter())
-                    # Swap bloklamiyorsa (pencere odak disi/ortulu, DWM baska ekranin hizinda) dongu
-                    # serbest kalip 142 FPS basiyordu (2026-09-19 TOD). Tik araligini cikis periyoduna bagla.
-                    if last_lock_T is not None and T - last_lock_T < 0.75 * out_period:
-                        if not free_logged:
-                            log.event("vsync_bloklamiyor", aralik_ms=round((T - last_lock_T) * 1000, 2))
-                            free_logged = True
-                        T = last_lock_T + out_period
-                        wait = T - time.perf_counter() - 0.002
-                        if wait > 0:
-                            time.sleep(wait)
-                    last_lock_T = T
                     if scorer is not None:
                         scorer.idle(T - time.perf_counter() - 0.004, T - t0)
                 else:
