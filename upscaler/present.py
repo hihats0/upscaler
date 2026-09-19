@@ -275,7 +275,11 @@ class GlPresenter:
         # Tam ekran pencere 1 px kisa: ekrani birebir kaplayan ve cizen pencere altinda Chrome'un
         # yakalanan kare hizi 50'den 35'e dustu (DWM tam ekran yolu); 1 px kisa pencerede 50,0
         # (olculdu 2026-09-15, arac penceresi ve normal pencere ayni).
-        w, h = self.windowed or (m.w, m.h - 1)
+        # Birincil olmayan ekranda (TV) Chrome yok: pencere tam boy. 1 px kisa pencere orada DWM
+        # kompozisyonuna dusup birincil panelin 144 Hz'inde sunuyordu (TV 50 Hz'e kilitlenmedi,
+        # takilma; 2026-09-19 16:24 sonrasi tum TV koşulari 144 FPS). Tam boyda TV'nin vsync'i.
+        short = 0 if not m.primary else 1
+        w, h = self.windowed or (m.w, m.h - short)
         self.win = glfw.create_window(w, h, self.title, None, None)
         if not self.win:
             raise RuntimeError("pencere acilamadi")
