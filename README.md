@@ -26,3 +26,20 @@ bellekte işlenir, diske yazılmaz. DRM atlatmaz; yakalanamayan (siyah gelen) i�
 ```
 
 Ayrıntılı ölçümler ve kararlar `reports/` ve `notes/` altında.
+
+## Lisans
+
+Bu deponun kendi kodu **Apache-2.0** (bkz. `LICENSE`).
+
+`third_party/` altındaki model mimarileri kendi lisanslarıyla birlikte durur:
+
+| Bileşen | Lisans |
+| --- | --- |
+| RT4KSR | Apache-2.0 |
+| SwinIR | Apache-2.0 |
+| Real-ESRGAN | BSD 3-Clause |
+| RIFE (vsrife) | MIT |
+| EfRLFN | MIT |
+
+Eğitim verisi depoya girmez. Kullanılan klipler YouTube'da CC BY lisanslı ve yükleyeni
+kendi çekimi olan kayıtlardır; TOD yayını kaydedilmez, eğitim verisi yapılmaz.
