@@ -61,3 +61,10 @@ Yiğit'e her mesajda tek soru sorulur. Sıradaki sorular burada bekler. Cevaplan
 ## 2026-09-19 gece (AI yeniden çizim)
 - TOD açıkken 2 dk canlı keskinlik ölçümü (kriter 1) için yayın açılsın; agent `--probe-sharp 2` ile ölçecek.
 - Hangi kısayol: "Maç TV AI" (güç 1,3) mı "agresif" (1,45) mi? Gözle seç.
+
+## Anlama soruları (gün sonu)
+
+İş sırasında sorulmaz. Büyük adım bitince sorusu buraya yazılır, gün sonunda en fazla 3 tanesi sorulur,
+cevaplanan silinir ve sonucu vault notunun **Anlama testleri** bölümüne geçer.
+
+(boş)
